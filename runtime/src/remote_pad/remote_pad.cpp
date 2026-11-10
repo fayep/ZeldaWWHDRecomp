@@ -245,15 +245,41 @@ void send_video(const uint8_t* data, size_t size, bool key, uint64_t time_ns, ui
 }
 
 bool audio_wanted() { return g_audio.load(std::memory_order_relaxed); }
+// The GamePad speaker's traffic, logged every 10 s while a phone is connected: the frames the game mixed for it,
+// how many were silent, how many went out, and how many it dropped as the phone did not ask for sound (or none
+// was connected). Tells a quiet game from a sender that stopped.
+static void audio_report(bool sent, bool silent) {
+    static uint64_t frames = 0, silence = 0, out = 0, dropped = 0, last_ms = 0;
+    frames++;
+    silence += silent;
+    out += sent;
+    dropped += !sent;
+    const uint64_t now = now_ms();
+    if (!last_ms) last_ms = now;
+    if (now - last_ms < 10000) return;
+    if (g_connected.load(std::memory_order_relaxed) || out)
+        log_msg("[remote pad] GamePad sound, last 10 s: %llu frames, %llu silent, %llu sent, %llu not sent (phone %s sound)",
+                (unsigned long long)frames, (unsigned long long)silence, (unsigned long long)out, (unsigned long long)dropped,
+                g_audio.load(std::memory_order_relaxed) ? "asks for" : "does not ask for");
+    frames = silence = out = dropped = 0;
+    last_ms = now;
+}
+
 void send_audio(const int32_t* left, const int32_t* right, int frames) {
-    if (!g_audio.load(std::memory_order_relaxed)) return;
+    if (!g_audio.load(std::memory_order_relaxed)) {
+        audio_report(false, true);
+        return;
+    }
     int16_t lr[2 * kMaxAudioFrames];
     frames = std::clamp(frames, 0, int(kMaxAudioFrames));
+    bool silent = true;
     for (int i = 0; i < frames; i++) {
         lr[2 * i] = int16_t(std::clamp<int32_t>(left[i], -32768, 32767));
         lr[2 * i + 1] = int16_t(std::clamp<int32_t>(right[i], -32768, 32767));
+        silent = silent && !lr[2 * i] && !lr[2 * i + 1];
     }
-    if (const auto srv = server()) srv->send_audio(lr, uint16_t(frames));
+    const auto srv = server();
+    audio_report(srv && srv->send_audio(lr, uint16_t(frames)), silent);
 }
 
 void set_boot_image(std::vector<uint8_t> jpeg) {
