@@ -275,6 +275,21 @@ void log_stats() {
         !!g_final_mix_cb[0], !!g_final_mix_cb[1]);
     LOG("[ax] GamePad aux cb %d%d%d, host plays %s", !!g_drc.aux_cb[0], !!g_drc.aux_cb[1], !!g_drc.aux_cb[2],
         g_output.play_drc ? (g_output.play_tv ? "TV + GamePad" : "GamePad") : "TV");
+    // which playing voices the game still sends to the GamePad, per bus (main, aux A, B, C), against the TV
+    int pad[kBuses] = {}, tv[kBuses] = {};
+    for (Voice& v : g_voices) {
+        if (!v.acquired || v.state != 1) continue;
+        const auto& drc = g_drc.mix[&v - g_voices];
+        for (int b = 0; b < kBuses; b++) {
+            bool p = false, t = false;
+            for (int c = 0; c < kDrcChannels; c++) p |= drc[c][b].vol || drc[c][b].delta;
+            for (int c = 0; c < kTvChannels; c++) t |= v.tv[c][b].vol || v.tv[c][b].delta;
+            pad[b] += p;
+            tv[b] += t;
+        }
+    }
+    LOG("[ax] voices with a GamePad mix (main/A/B/C): %d/%d/%d/%d, with a TV mix: %d/%d/%d/%d",
+        pad[0], pad[1], pad[2], pad[3], tv[0], tv[1], tv[2], tv[3]);
 }
 
 void process_voices() {
