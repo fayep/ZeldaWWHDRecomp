@@ -112,7 +112,8 @@ option(WWHD_HAS_IOKIT "macOS AppKit host: read generic HID gamepads through IOKi
 # (gfx/host_tvos.mm) instead of the AppKit one; the game is an app bundle. WWHD_TVOS is defined everywhere,
 # the generated game code too (ppc.h: where the guest memory lies).
 set(WWHD_TVOS OFF)
-if(CMAKE_SYSTEM_NAME STREQUAL "tvOS")
+# An iPad build (-DCMAKE_SYSTEM_NAME=iOS) is the same app: WWHD_TVOS also means that UIKit host there.
+if(CMAKE_SYSTEM_NAME MATCHES "^(tvOS|iOS)$")
   set(WWHD_TVOS ON)
   set(WWHD_HAS_IOKIT OFF CACHE BOOL "" FORCE)
   set(WWHD_EDITOR_MCP OFF CACHE BOOL "" FORCE)
@@ -387,9 +388,19 @@ if(ANDROID)
 elseif(WWHD_TVOS)
   # an app bundle (tvos/README.md: packaging the game files, signing, installing)
   add_executable(wwhd MACOSX_BUNDLE ${RUNTIME_SOURCES} ${GX2_SOURCES} ${GFX_SOURCES} ${MOD_GFX_SOURCES} ${IMGUI_METAL})
+  # Your own identifiers for an app you sign (an App ID is unique to one developer team): WWHD_APPLE_ID_PREFIX
+  # names the apps <prefix>.tv / <prefix>.ipad.
+  set(WWHD_APPLE_ID_PREFIX "org.wwhdrecomp" CACHE STRING "bundle identifier prefix of the Apple TV / iPad apps")
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(WWHD_BUNDLE_PLIST ${CMAKE_SOURCE_DIR}/ipados/Info.plist.in)
+    set(WWHD_BUNDLE_ID ${WWHD_APPLE_ID_PREFIX}.ipad)
+  else()
+    set(WWHD_BUNDLE_PLIST ${CMAKE_SOURCE_DIR}/tvos/Info.plist.in)
+    set(WWHD_BUNDLE_ID ${WWHD_APPLE_ID_PREFIX}.tv)
+  endif()
   set_target_properties(wwhd PROPERTIES OUTPUT_NAME WindWakerHD
-    MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/tvos/Info.plist.in
-    MACOSX_BUNDLE_GUI_IDENTIFIER org.wwhdrecomp.tv
+    MACOSX_BUNDLE_INFO_PLIST ${WWHD_BUNDLE_PLIST}
+    MACOSX_BUNDLE_GUI_IDENTIFIER ${WWHD_BUNDLE_ID}
     MACOSX_BUNDLE_BUNDLE_NAME "Wind Waker HD")
   # its icon and Top Shelf images: the game's TV boot image once the game files are in the bundle, else
   # the project's icon (tvos/make_icon.py; sips and actool)
