@@ -7,6 +7,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include <csignal>
 #include <mach/mach.h>
 #include <os/proc.h>
 #include <pthread.h>
@@ -306,6 +307,9 @@ void quit() {}
 }  // namespace hostui
 
 int main(int argc, char** argv) {
+    // a closed pipe must not end the game: the console of a Mac that started it (xcrun devicectl
+    // --console) goes when that Mac lets go of the Apple TV, and the next log line would raise SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
     g_argc = argc;
     g_argv = argv;
     @autoreleasepool {
