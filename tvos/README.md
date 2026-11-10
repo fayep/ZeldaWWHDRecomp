@@ -48,6 +48,8 @@ The app contains code and files from your own game: it is for your own devices o
 2. Into `build/tvos/WindWakerHD.app`: your game files as `game/` (`code`, `content`, `meta`), the shader
    library as `shaders.metallib` and the live shader cache as `shaders.bin` (both from a Mac's prepared
    shaders).
+   Then `python3 tvos/make_icon.py build/tvos/WindWakerHD.app`: the icon and Top Shelf images become
+   the game's TV boot image (each build makes them, from the project's icon until the game files are in).
 3. Sign it with your team's development profile for tvOS and install it with `xcrun devicectl device
    install app`. Reinstalls send only what changed (seconds, not the 1.8 GB).
 4. Start it from the Apple TV's home screen. The iPhone GamePad is on by default on an Apple TV (Settings >
