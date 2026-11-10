@@ -50,8 +50,8 @@ The app contains code and files from your own game: it is for your own devices o
    shaders).
 3. Sign it with your team's development profile for tvOS and install it with `xcrun devicectl device
    install app`. Reinstalls send only what changed (seconds, not the 1.8 GB).
-4. Start it with `WWHD_REMOTE_PAD=1` (`xcrun devicectl device process launch --environment-variables`) or
-   turn on Settings > Controls > iPhone GamePad.
+4. Start it from the Apple TV's home screen. The iPhone GamePad is on by default on an Apple TV (Settings >
+   Controls > iPhone GamePad turns it off, and that is remembered).
 
 Still to do: setup building and installing it; saves kept in iCloud (CloudKit), in step with the Mac; a
 settings panel for the Siri Remote.
