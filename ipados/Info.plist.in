@@ -56,6 +56,7 @@
 	<array>
 		<string>_wwhd-gamepad._udp</string>
 	</array>
+	${WWHD_ICLOUD_PLIST}
 	<key>GCSupportsControllerUserInteraction</key>
 	<true/>
 	<key>GCSupportedGameControllers</key>

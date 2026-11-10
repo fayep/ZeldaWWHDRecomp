@@ -388,12 +388,20 @@ if(ANDROID)
 elseif(WWHD_TVOS)
   # an app bundle (tvos/README.md: packaging the game files, signing, installing)
   add_executable(wwhd MACOSX_BUNDLE ${RUNTIME_SOURCES} ${GX2_SOURCES} ${GFX_SOURCES} ${MOD_GFX_SOURCES} ${IMGUI_METAL})
-  # Your own identifiers for an app you sign (an App ID is unique to one developer team): WWHD_APPLE_ID_PREFIX
-  # names the apps <prefix>.tv / <prefix>.ipad.
+  # Your own identifiers for an app you sign (an App ID and an iCloud container are unique to one developer
+  # team): WWHD_APPLE_ID_PREFIX names the apps <prefix>.tv / <prefix>.ipad; WWHD_ICLOUD_CONTAINER (an
+  # "iCloud.<...>" container of that team, empty: none) keeps the iPad's save in that container's iCloud
+  # Drive folder (gfx/host_tvos.mm), visible as "Wind Waker HD" in iCloud Drive.
   set(WWHD_APPLE_ID_PREFIX "org.wwhdrecomp" CACHE STRING "bundle identifier prefix of the Apple TV / iPad apps")
+  set(WWHD_ICLOUD_CONTAINER "" CACHE STRING "iCloud container for the iPad's save (empty: the save stays on the device)")
+  set(WWHD_ICLOUD_PLIST "")
   if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(WWHD_BUNDLE_PLIST ${CMAKE_SOURCE_DIR}/ipados/Info.plist.in)
     set(WWHD_BUNDLE_ID ${WWHD_APPLE_ID_PREFIX}.ipad)
+    if(WWHD_ICLOUD_CONTAINER)
+      target_compile_definitions(wwhd PRIVATE WWHD_ICLOUD_CONTAINER="${WWHD_ICLOUD_CONTAINER}")
+      set(WWHD_ICLOUD_PLIST "<key>NSUbiquitousContainers</key><dict><key>${WWHD_ICLOUD_CONTAINER}</key><dict><key>NSUbiquitousContainerIsDocumentScopePublic</key><true/><key>NSUbiquitousContainerName</key><string>Wind Waker HD</string><key>NSUbiquitousContainerSupportedFolderLevels</key><string>Any</string></dict></dict>")
+    endif()
   else()
     set(WWHD_BUNDLE_PLIST ${CMAKE_SOURCE_DIR}/tvos/Info.plist.in)
     set(WWHD_BUNDLE_ID ${WWHD_APPLE_ID_PREFIX}.tv)
