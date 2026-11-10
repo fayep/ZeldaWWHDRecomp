@@ -24,6 +24,7 @@
 #include "../interp.h"
 #include "remote_video.h"
 #include "../mods/save_folder.h"
+#include "../remote_pad/remote_pad.h"
 #include "../platform/host.h"
 #include <filesystem>
 
@@ -273,7 +274,11 @@ static void* run_game(void*) {
 // suspended in the background, the game can't keep its save folder's lock fresh: it gives it back meanwhile
 // (mods/save_folder.h pause_lock)
 - (void)sceneDidEnterBackground:(UIScene*)scene { save_folder::pause_lock(); }
-- (void)sceneWillEnterForeground:(UIScene*)scene { save_folder::resume_lock(); }
+- (void)sceneWillEnterForeground:(UIScene*)scene {
+    save_folder::resume_lock();
+    // the iPhone GamePad: the system took the server's socket and its Bonjour advertisement in the background
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ remote_pad::restart(); });
+}
 - (void)scene:(UIScene*)scene willConnectToSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options {
     UIWindowScene* ws = (UIWindowScene*)scene;
     self.window = [[UIWindow alloc] initWithWindowScene:ws];
