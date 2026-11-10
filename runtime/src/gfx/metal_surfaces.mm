@@ -1,3 +1,4 @@
+#include "vulkan/bc_reference.h"  // (the CPU decoder; no Vulkan in it)
 #include "background_shaders.h"
 #include "gfx/render_mips.h"
 #include "gfx/renderer.h"
@@ -877,6 +878,16 @@ void upload_surface(Surface* s) {
         decode_level(s, level, base, data, w, h, slices);
         if (checkMips) levelsForCheck.push_back(data);
         uint32_t bw = f.compressed ? (w + 3) / 4 : w, bh = f.compressed ? (h + 3) / 4 : h;
+        // rows of the copy below: blocks, or the decoded texels of a BC format the GPU cannot sample (formats.h)
+        uint32_t rowBytes = bw * f.hostBytesPerBlock, rows = bh, copyW = f.compressed ? bw * 4 : w, copyH = f.compressed ? bh * 4 : h;
+        if (f.decodeBC) {
+            try {
+                data = gfxvk::bc::decode(data, w, h, slices, f.bcMode);
+            } catch (const std::exception&) {
+                continue;  // (a level whose blocks do not add up: left as it was)
+            }
+            rowBytes = w * 4, rows = h, copyW = w, copyH = h;
+        }
         NSUInteger stagingOffset = 0;
         if (!texture_staging(data.data(), data.size(), &staging, &stagingOffset)) {
             staging = [R.device newBufferWithBytes:data.data() length:data.size() options:MTLResourceStorageModeShared];
@@ -884,13 +895,13 @@ void upload_surface(Surface* s) {
         }
         bool is3D = s->tex.textureType == MTLTextureType3D;
         uint32_t layers = is3D ? 1 : (s->tex.textureType == MTLTextureTypeCube ? 6 : (uint32_t)s->tex.arrayLength);
-        uint32_t perSlice = bw * bh * f.hostBytesPerBlock;
+        uint32_t perSlice = rowBytes * rows;
         for (uint32_t z = 0; z < (is3D ? 1 : std::min(slices, layers)); z++) {
             [blit copyFromBuffer:staging
                      sourceOffset:stagingOffset + (NSUInteger)z * perSlice
-                sourceBytesPerRow:bw * f.hostBytesPerBlock
+                sourceBytesPerRow:rowBytes
               sourceBytesPerImage:perSlice
-                       sourceSize:MTLSizeMake(f.compressed ? bw * 4 : w, f.compressed ? bh * 4 : h, is3D ? slices : 1)
+                       sourceSize:MTLSizeMake(copyW, copyH, is3D ? slices : 1)
                         toTexture:s->tex
                  destinationSlice:z
                  destinationLevel:level

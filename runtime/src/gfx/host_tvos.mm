@@ -8,6 +8,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include <pthread.h>
+#include <unistd.h>
 #include <functional>
 #include <string>
 #include <vector>
@@ -47,8 +48,24 @@ static WWMetalView* g_view = nil;
 static int g_argc = 0;
 static char** g_argv = nullptr;
 
+// Where things are: the game files inside the app (game/, packaged with it), everything the game writes in
+// the app's Caches folder (an Apple TV app may write nowhere else that lasts): settings and caches (the
+// user folder), saves, and the log (relative to the working directory).
 static void* run_game(void*) {
-    wwhd_main(g_argc, g_argv);
+    NSString* caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+    NSString* user = [caches stringByAppendingPathComponent:@"user"];
+    NSString* save = [caches stringByAppendingPathComponent:@"save"];
+    for (NSString* d in @[ user, save ])
+        [[NSFileManager defaultManager] createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
+    chdir(caches.fileSystemRepresentation);
+    setenv("WWHD_USER_DIR", user.fileSystemRepresentation, 0);
+    const std::string game = std::string([NSBundle mainBundle].bundlePath.fileSystemRepresentation) + "/game";
+    std::vector<std::string> args = {g_argc ? g_argv[0] : "WindWakerHD", "--game", game, "--save", save.fileSystemRepresentation};
+    for (int i = 1; i < g_argc; i++) args.push_back(g_argv[i]);  // (devicectl launch arguments come after)
+    std::vector<char*> argv;
+    for (auto& a : args) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    wwhd_main(int(args.size()), argv.data());
     return nullptr;
 }
 
