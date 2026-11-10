@@ -7,8 +7,11 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include <mach/mach.h>
+#include <os/proc.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <algorithm>
 #include <functional>
 #include <string>
 #include <vector>
@@ -19,6 +22,7 @@
 #include "renderer.h"
 
 int wwhd_main(int argc, char** argv);  // main.cpp
+void log_msg(const char* fmt, ...);
 
 @interface WWMetalView : UIView
 @end
@@ -51,8 +55,48 @@ static char** g_argv = nullptr;
 // Where things are: the game files inside the app (game/, packaged with it), everything the game writes in
 // the app's Caches folder (an Apple TV app may write nowhere else that lasts): settings and caches (the
 // user folder), saves, and the log (relative to the working directory).
+// The live shader cache packaged with the app (shaders.bin: every shader and pipeline the game is known to use,
+// recorded where the game was prepared) goes where the renderer keeps it (the user folder's live shader caches,
+// shader_prebuild.h bind_live_caches), when the
+// copy there is missing or smaller: the first start, or after tvOS emptied the Caches folder. Its records are
+// the game's state, valid on any GPU; with the packaged shader library none of them compiles here.
+static void install_shader_cache(NSString* caches) {
+    NSString* packaged = [[NSBundle mainBundle] pathForResource:@"shaders" ofType:@"bin"];
+    if (!packaged) return;
+    NSString* dir = [caches stringByAppendingPathComponent:@"user/shader-prebuild/live"];
+    NSString* live = [dir stringByAppendingPathComponent:@"shaders.bin"];
+    NSFileManager* fm = [NSFileManager defaultManager];
+    const unsigned long long have = [[fm attributesOfItemAtPath:live error:nil] fileSize];
+    const unsigned long long ship = [[fm attributesOfItemAtPath:packaged error:nil] fileSize];
+    if (have >= ship) return;
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm removeItemAtPath:live error:nil];
+    NSError* err = nil;
+    if ([fm copyItemAtPath:packaged toPath:live error:&err]) log_msg("[tvos] shader cache installed from the app (%llu MB)", ship >> 20);
+    else log_msg("[tvos] shader cache not installed: %s", err.localizedDescription.UTF8String);
+}
+
+// Memory: what tvOS counts against the app (its physical footprint) and what it still allows, every 10 s
+// (an Apple TV app has a fixed limit, about 2 GB on an A15, and is ended when it reaches it)
+static void start_memory_log() {
+    static dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, NSEC_PER_SEC);
+    dispatch_source_set_event_handler(timer, ^{
+        task_vm_info_data_t info{};
+        mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+        if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS) return;
+        static uint64_t peak = 0;
+        peak = std::max<uint64_t>(peak, info.phys_footprint);
+        log_msg("[tvos] memory: footprint %llu MB (peak %llu MB), %zu MB more allowed", (unsigned long long)(info.phys_footprint >> 20),
+                (unsigned long long)(peak >> 20), os_proc_available_memory() >> 20);
+    });
+    dispatch_resume(timer);
+}
+
 static void* run_game(void*) {
     NSString* caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+    install_shader_cache(caches);
+    start_memory_log();
     NSString* user = [caches stringByAppendingPathComponent:@"user"];
     NSString* save = [caches stringByAppendingPathComponent:@"save"];
     for (NSString* d in @[ user, save ])
