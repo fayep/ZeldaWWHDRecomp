@@ -25,7 +25,10 @@ bool bc_textures_supported() {
 
 static FormatInfo decoded_bc(FormatInfo f, unsigned type, bool isSigned, bool isSrgb) {
     if (bc_textures_supported()) return f;
-    f.pixel = isSigned ? MTLPixelFormatRGBA8Snorm : isSrgb && type <= 3 ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
+    // BC4 / BC5 hold one / two channels: R8 / RG8 keep exactly what they decode to (the rest reads 0, 0, 1 as BC)
+    if (type == 4) f.pixel = isSigned ? MTLPixelFormatR8Snorm : MTLPixelFormatR8Unorm;
+    else if (type == 5) f.pixel = isSigned ? MTLPixelFormatRG8Snorm : MTLPixelFormatRG8Unorm;
+    else f.pixel = isSrgb ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
     f.decodeBC = true;
     f.bcMode = uint16_t(type | (isSigned ? 256 : 0));
     return f;

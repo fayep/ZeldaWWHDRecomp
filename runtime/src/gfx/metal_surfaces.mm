@@ -886,7 +886,15 @@ void upload_surface(Surface* s) {
             } catch (const std::exception&) {
                 continue;  // (a level whose blocks do not add up: left as it was)
             }
-            rowBytes = w * 4, rows = h, copyW = w, copyH = h;
+            // BC4 / BC5: the decoder's RGBA packed to the R8 / RG8 texture's channels
+            const uint32_t channels = (f.bcMode & 7) == 4 ? 1 : (f.bcMode & 7) == 5 ? 2 : 4;
+            if (channels < 4) {
+                const size_t n = data.size() / 4;
+                for (size_t i = 0; i < n; i++)
+                    for (uint32_t c = 0; c < channels; c++) data[i * channels + c] = data[i * 4 + c];
+                data.resize(n * channels);
+            }
+            rowBytes = w * channels, rows = h, copyW = w, copyH = h;
         }
         NSUInteger stagingOffset = 0;
         if (!texture_staging(data.data(), data.size(), &staging, &stagingOffset)) {

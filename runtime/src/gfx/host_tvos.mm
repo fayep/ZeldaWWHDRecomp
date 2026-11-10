@@ -20,6 +20,7 @@
 #include "../overlay/hostui.h"
 #include "display_modes.h"
 #include "renderer.h"
+#include "../interp.h"
 
 int wwhd_main(int argc, char** argv);  // main.cpp
 void log_msg(const char* fmt, ...);
@@ -76,7 +77,44 @@ static void install_shader_cache(NSString* caches) {
     else log_msg("[tvos] shader cache not installed: %s", err.localizedDescription.UTF8String);
 }
 
-// Memory: what tvOS counts against the app (its physical footprint) and what it still allows, every 10 s
+// Heat guard: the Apple TV 4K (A15) has no fan, and under the game's load it reaches tvOS's "serious" thermal
+// state, where the system slows the chip until the game runs at a third of its speed (30 -> 10 fps, measured).
+// From "serious" on, the game lowers its own load instead: 60 fps pauses (30), ambient occlusion goes off and
+// the internal resolution drops to 0.75x. After a minute at "fair" or "nominal" the player's settings come
+// back as they were. Nothing it changes is saved. (Android pauses only 60 fps: platform/heat_guard.h.)
+struct HeatGuard {
+    bool active = false;
+    double cool_since = -1;
+    int interp_mode = 0, ao = 0;
+    bool ao_hires = false;
+    float res = 1.0f;
+
+    // main thread, every 10 s
+    void tick(NSInteger thermal, double now) {
+        const bool hot = thermal >= NSProcessInfoThermalStateSerious;
+        if (hot) cool_since = -1;
+        else if (cool_since < 0) cool_since = now;
+        if (hot && !active) {
+            active = true;
+            interp_mode = interp::mode(), ao = render::ao_mode(), ao_hires = render::ao_hires(), res = render::res_scale();
+            if (interp_mode) interp::set_mode(0);
+            render::set_ao_mode(0);
+            render::set_ao_hires(false);
+            if (res > 0.75f) render::set_res_scale(0.75f);
+            log_msg("[tvos] heat guard: the Apple TV is hot: 30 fps, no ambient occlusion, 0.75x resolution until it cools");
+        } else if (!hot && active && now - cool_since >= 60) {
+            active = false;
+            interp::set_mode(interp_mode);
+            render::set_ao_mode(ao);
+            render::set_ao_hires(ao_hires);
+            render::set_res_scale(res);
+            log_msg("[tvos] heat guard: cooled down: the settings are back");
+        }
+    }
+};
+
+// Memory: what tvOS counts against the app (its physical footprint) and what it still allows, and the thermal
+// state, every 10 s
 // (an Apple TV app has a fixed limit, about 2 GB on an A15, and is ended when it reaches it)
 static void start_memory_log() {
     static dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
@@ -87,8 +125,16 @@ static void start_memory_log() {
         if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS) return;
         static uint64_t peak = 0;
         peak = std::max<uint64_t>(peak, info.phys_footprint);
-        log_msg("[tvos] memory: footprint %llu MB (peak %llu MB), %zu MB more allowed", (unsigned long long)(info.phys_footprint >> 20),
-                (unsigned long long)(peak >> 20), os_proc_available_memory() >> 20);
+        // and how hot the Apple TV is: tvOS slows the chip down from "serious" (the A15 Apple TV has no fan)
+        static const char* const kThermal[] = {"nominal", "fair", "serious", "critical"};
+        const NSInteger t = [NSProcessInfo processInfo].thermalState;
+        log_msg("[tvos] memory: footprint %llu MB (peak %llu MB), %zu MB more allowed; thermal state %s",
+                (unsigned long long)(info.phys_footprint >> 20), (unsigned long long)(peak >> 20), os_proc_available_memory() >> 20,
+                t >= 0 && t < 4 ? kThermal[t] : "?");
+        // (the renderer's settings change on the main thread, as the settings overlay changes them)
+        static HeatGuard guard;
+        const double now = CACurrentMediaTime();
+        if (render::g_backend) dispatch_async(dispatch_get_main_queue(), ^{ guard.tick(t, now); });
     });
     dispatch_resume(timer);
 }

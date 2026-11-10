@@ -28,7 +28,7 @@ struct FormatInfo {
     bool stencil = false;
     Convert convert = Convert::NONE;
     enum Kind : uint8_t { FLOAT, UINT, SINT } kind = FLOAT;  // shader-visible data type
-    // A BC format on a GPU without BC textures (an Apple TV's A15): the texture is RGBA8 and the upload decodes
+    // A BC format on a GPU without BC textures (an Apple TV's A15): the texture is RGBA8 (BC4 R8, BC5 RG8) and the upload decodes
     // the blocks (gfxvk::bc::decode; bcMode is its mode: BC type 1..5, +256 signed). Everything else still sees
     // 4x4 blocks of bytesPerBlock (compressed): detiling and copies are unchanged.
     bool decodeBC = false;

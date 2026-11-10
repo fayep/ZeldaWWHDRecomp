@@ -2337,6 +2337,18 @@ void report_skips() {
         (unsigned long long)g_stat_staging_buffers, g_stat_staging_buffer_bytes / 1048576.0);
     g_stat_staging_pool = g_stat_staging_pool_bytes = g_stat_staging_buffers = g_stat_staging_buffer_bytes = 0;
     g_stat_full_checks = g_stat_uploads = g_stat_invalidates = g_stat_invalidated_surfaces = g_stat_hashed_bytes = 0;
+    if (!bc_textures_supported()) {
+        // a GPU without BC textures (formats.h decodeBC): what the decoded ones take, by BC type, of all surfaces
+        double bc[6] = {}, all = 0;
+        for (const auto& [addr, surf] : R.surfaces) {
+            if (!surf->tex) continue;
+            const double mb = surf->tex.allocatedSize / 1048576.0;
+            all += mb;
+            if (surf->fmt.decodeBC) bc[surf->fmt.bcMode & 7] += mb;
+        }
+        LOG("[gfx] decoded BC textures: BC1 %.0f MiB, BC2 %.0f, BC3 %.0f, BC4 %.0f, BC5 %.0f; all surfaces %.0f MiB",
+            bc[1], bc[2], bc[3], bc[4], bc[5], all);
+    }
     for (int k = 0; k < kRangeKinds; k++) {
         size_t dynamicRanges = 0;
         for (auto& [key, r] : g_guest_ranges[k]) dynamicRanges += r.dynamic;
