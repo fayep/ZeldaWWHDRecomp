@@ -79,13 +79,13 @@ static void install_shader_cache(NSString* caches) {
 
 // Heat guard: the Apple TV 4K (A15) has no fan, and under the game's load it reaches tvOS's "serious" thermal
 // state, where the system slows the chip until the game runs at a third of its speed (30 -> 10 fps, measured).
-// From "serious" on, the game lowers its own load instead: 60 fps pauses (30), ambient occlusion goes off and
-// the internal resolution drops to 0.75x. After a minute at "fair" or "nominal" the player's settings come
+// From "serious" on, the game lowers its own load instead: 60 fps pauses (30), the occlusion depth goes to
+// half size and the internal resolution drops to 0.75x. After a minute at "fair" or "nominal" the player's settings come
 // back as they were. Nothing it changes is saved. (Android pauses only 60 fps: platform/heat_guard.h.)
 struct HeatGuard {
     bool active = false;
     double cool_since = -1;
-    int interp_mode = 0, ao = 0;
+    int interp_mode = 0;
     bool ao_hires = false;
     float res = 1.0f;
 
@@ -96,16 +96,14 @@ struct HeatGuard {
         else if (cool_since < 0) cool_since = now;
         if (hot && !active) {
             active = true;
-            interp_mode = interp::mode(), ao = render::ao_mode(), ao_hires = render::ao_hires(), res = render::res_scale();
+            interp_mode = interp::mode(), ao_hires = render::ao_hires(), res = render::res_scale();
             if (interp_mode) interp::set_mode(0);
-            render::set_ao_mode(0);
             render::set_ao_hires(false);
             if (res > 0.75f) render::set_res_scale(0.75f);
-            log_msg("[tvos] heat guard: the Apple TV is hot: 30 fps, no ambient occlusion, 0.75x resolution until it cools");
+            log_msg("[tvos] heat guard: the Apple TV is hot: 30 fps, half-size occlusion depth, 0.75x resolution until it cools");
         } else if (!hot && active && now - cool_since >= 60) {
             active = false;
             interp::set_mode(interp_mode);
-            render::set_ao_mode(ao);
             render::set_ao_hires(ao_hires);
             render::set_res_scale(res);
             log_msg("[tvos] heat guard: cooled down: the settings are back");
@@ -202,10 +200,39 @@ static void* run_game(void*) {
 namespace gfx {
 // display.mm: the TV picture's layer (main thread; the view exists once the scene connected)
 CAMetalLayer* host_tvos_layer() { return g_view ? (CAMetalLayer*)g_view.layer : nil; }
-
-// display.mm
 bool host_setting(const char* key, std::string& value);
 void set_host_setting(const char* key, const std::string& value);
+
+// The graphics options the Mac's menus save (menu.mm, not built here), in the same settings file display.mm keeps
+// and under the same names. The occlusion depth starts at half size: the A15's GPU is the limit, as a phone's.
+static bool saved_number(const char* key, double& v) {
+    std::string s;
+    if (!host_setting(key, s) || s.empty()) return false;
+    char* end = nullptr;
+    v = strtod(s.c_str(), &end);
+    return end && end != s.c_str();
+}
+void host_tvos_load_graphics() {
+    double v;
+    if (!getenv("WWHD_RES_SCALE") && saved_number("resScale", v) && v > 0) render::set_res_scale(float(v));
+    if (!getenv("WWHD_AO_HIRES")) render::set_ao_hires(saved_number("aoHires", v) && v != 0);  // (half size unless chosen)
+    if (saved_number("fxaa", v)) render::set_fxaa(v != 0);
+    if (saved_number("aniso", v)) render::set_aniso(v != 0);
+    if (saved_number("cloudShadows", v)) render::set_cloud_shadows(v != 0);
+    if (saved_number("interpFps", v)) interp::set_fps(int(v));
+    if (saved_number("fps60", v)) interp::set_mode(int(v));
+}
+static void save_graphics() {
+    set_host_setting("resScale", std::to_string(render::res_scale()));
+    set_host_setting("aoHires", render::ao_hires() ? "1" : "0");
+    set_host_setting("fxaa", render::fxaa() ? "1" : "0");
+    set_host_setting("aniso", render::aniso() ? "1" : "0");
+    set_host_setting("cloudShadows", render::cloud_shadows() ? "1" : "0");
+    set_host_setting("interpFps", std::to_string(interp::fps()));
+    set_host_setting("fps60", std::to_string(interp::mode()));
+}
+
+// display.mm
 int display_filter();
 void display_set_filter(int f);
 int display_drc_mode();
@@ -246,7 +273,7 @@ void set_res_scale(float s) {
     render::set_res_scale(s);
     gfx::set_host_setting("resScale", std::to_string(s));
 }
-void graphics_changed() {}
+void graphics_changed() { gfx::save_graphics(); }  // (an option of Settings > Graphics changed)
 int scale_filter() { return gfx::display_filter(); }
 void set_scale_filter(int f) { gfx::display_set_filter(f); }
 bool scale_filter_available() { return true; }

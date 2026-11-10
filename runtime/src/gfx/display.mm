@@ -702,6 +702,8 @@ static void create_windows() {
     done = true;
     load_settings();
     load_options();
+    void host_tvos_load_graphics();  // host_tvos.mm: the graphics options saved in the same file
+    host_tvos_load_graphics();
     if (g_mode == kDrcWindow) g_mode = kDrcAuto;  // (no second window on a TV: automatic picture-in-picture)
     g_shown = !input::pro_controller();
 }
