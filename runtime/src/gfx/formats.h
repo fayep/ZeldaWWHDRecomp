@@ -33,6 +33,10 @@ struct FormatInfo {
     // 4x4 blocks of bytesPerBlock (compressed): detiling and copies are unchanged.
     bool decodeBC = false;
     uint16_t bcMode = 0;
+    // with etcpak built in (WWHD_ETCPAK: the Apple TV), BC1-3 are re-encoded to EAC_RGBA8 (ETC2 colour and EAC
+    // alpha, 16 bytes a block) instead of RGBA8: a quarter of the memory. hostBytesPerBlock stays the guest's
+    // (the detiled blocks are BC); the upload knows the ETC2 size.
+    bool etc2 = false;
 };
 // the GPU samples BC textures itself (otherwise format_info decodes them, decodeBC)
 bool bc_textures_supported();

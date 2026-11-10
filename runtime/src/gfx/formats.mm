@@ -29,6 +29,12 @@ static FormatInfo decoded_bc(FormatInfo f, unsigned type, bool isSigned, bool is
     if (type == 4) f.pixel = isSigned ? MTLPixelFormatR8Snorm : MTLPixelFormatR8Unorm;
     else if (type == 5) f.pixel = isSigned ? MTLPixelFormatRG8Snorm : MTLPixelFormatRG8Unorm;
     else f.pixel = isSrgb ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
+#ifdef WWHD_ETCPAK
+    if (type <= 3) {
+        f.pixel = isSrgb ? MTLPixelFormatEAC_RGBA8_sRGB : MTLPixelFormatEAC_RGBA8;
+        f.etc2 = true;
+    }
+#endif
     f.decodeBC = true;
     f.bcMode = uint16_t(type | (isSigned ? 256 : 0));
     return f;
