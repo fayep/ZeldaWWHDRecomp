@@ -2041,6 +2041,21 @@ static CacheScan cache_scan(const std::string& path) {
 }
 
 // load and replay the recipes; runs once on the render thread before the first draw
+// Known pipelines are built in the background after the replay, a few per frame, so none stalls a draw. On an
+// Apple TV that is every recorded pipeline (about 12,000 with a full shader prebuild, some 150 MB) under a
+// fixed memory limit: there they are built when first drawn. WWHD_BG_PIPELINES=1 / 0 decides elsewhere.
+static bool background_pipelines() {
+    static const bool on = [] {
+        if (const char* e = getenv("WWHD_BG_PIPELINES"); e && *e) return strcmp(e, "0") != 0;
+#ifdef WWHD_TVOS
+        return false;
+#else
+        return true;
+#endif
+    }();
+    return on;
+}
+
 static void cache_load();
 static void cache_load_once() {
     static bool loaded = (cache_load(), true);
@@ -2112,7 +2127,7 @@ static void cache_load() {
                 if (repeated()) continue;
                 PipelineRecipe r;
                 g_user_pipelines.insert(h);
-                if (get(p, end, r) && g_known_pipelines.insert(h).second && !recordOnly) {
+                if (get(p, end, r) && g_known_pipelines.insert(h).second && !recordOnly && background_pipelines()) {
                     g_pending_pipelines.push_back(r);
                     pipelines++;
                 }
@@ -3051,7 +3066,7 @@ bool headstart_queue_pipeline(const uint8_t* raw, size_t size) {
     if (size != sizeof(PipelineRecipe)) return false;
     PipelineRecipe r;
     memcpy(&r, raw, size);
-    if (g_known_pipelines.insert(hash_bytes(raw, size)).second) g_pending_pipelines.push_back(r);
+    if (g_known_pipelines.insert(hash_bytes(raw, size)).second && background_pipelines()) g_pending_pipelines.push_back(r);
     return true;
 }
 
