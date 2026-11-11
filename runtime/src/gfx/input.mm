@@ -45,6 +45,7 @@ namespace gx2 { void checkpoint_vulkan_caches(); void checkpoint_present_observe
 #include "../rumble.h"
 #include "../motion/motion.h"
 #include "../remote_pad/remote_pad.h"
+#include "display_modes.h"
 #include "../overlay/overlay.h"
 #include "../overlay/release_gate.h"
 #include "../fixed_seed.h"
@@ -1390,6 +1391,13 @@ PadState read() {
     if (!no_host) gfx::display_touchpad(s, g_touchpad.down && !overlay::blocks_input(), g_touchpad.click && !overlay::blocks_input(),
                                         g_touchpad.x, g_touchpad.y);
     if (g_test_touch) s.touch = true, s.tx = g_test_tx, s.ty = g_test_ty;
+    // Plus pressed: the pause view (display_modes.h) may show the GamePad picture while the game's menu is open
+    {
+        static bool plus = false;
+        const bool now = (s.buttons & input::kPlus) != 0;
+        if (now && !plus && !overlay::blocks_input()) gfx::display_plus_pressed();
+        plus = now;
+    }
     // debug: WWHD_LOG_BUTTONS=1 logs every change of the merged button bits
     static const bool log_buttons = getenv("WWHD_LOG_BUTTONS") != nullptr;
     static uint32_t last_buttons = 0;
