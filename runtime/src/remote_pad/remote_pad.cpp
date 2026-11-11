@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <deque>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -292,7 +293,7 @@ static void audio_report(bool sent, bool silent) {
     last_ms = now;
 }
 
-void send_audio(const int32_t* left, const int32_t* right, int frames) {
+void send_audio(const int32_t* left, const int32_t* right, int frames, int delay) {
     if (!g_audio.load(std::memory_order_relaxed)) {
         audio_report(false, true);
         return;
@@ -306,6 +307,24 @@ void send_audio(const int32_t* left, const int32_t* right, int frames) {
         silent = silent && !lr[2 * i] && !lr[2 * i + 1];
     }
     const auto srv = server();
+    // the delay line (AX frame thread only): what comes out is `delay` frames old. A longer delay waits (a short
+    // gap); a shorter one drops the oldest
+    static std::deque<int16_t> held;
+    if (delay <= 0) {
+        held.clear();
+        audio_report(srv && srv->send_audio(lr, uint16_t(frames)), silent);
+        return;
+    }
+    held.insert(held.end(), lr, lr + 2 * frames);
+    const size_t want = size_t(delay + frames) * 2;
+    if (held.size() > want + size_t(frames) * 2) held.erase(held.begin(), held.end() - want);
+    if (held.size() < want) {
+        audio_report(false, silent);
+        return;
+    }
+    std::copy(held.begin(), held.begin() + 2 * frames, lr);
+    held.erase(held.begin(), held.begin() + 2 * frames);
+    silent = std::all_of(lr, lr + 2 * frames, [](int16_t v) { return v == 0; });
     audio_report(srv && srv->send_audio(lr, uint16_t(frames)), silent);
 }
 

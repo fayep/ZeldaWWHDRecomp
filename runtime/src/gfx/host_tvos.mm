@@ -362,6 +362,7 @@ static void (*g_pull)(int16_t*, uint32_t) = nullptr;
 static AudioUnit g_units[3] = {};  // [kFolded], [kDiscrete]
 void uikit_audio_route_check() {
     AVAudioSession* session = [AVAudioSession sharedInstance];
+    audio::set_output_latency_ms(float((session.outputLatency + session.IOBufferDuration) * 1000));
     if (session.maximumOutputNumberOfChannels >= 6) {
         [session setPreferredOutputNumberOfChannels:6 error:nil];
         g_route = kDiscrete;
@@ -476,6 +477,14 @@ bool uikit_spatial_start(void (*pull)(int16_t* interleaved, uint32_t frames)) {
         int route = kRenderer;
         double lastReport = 0, clockSeen = -1, clockSince = 0;
         for (;;) {
+            // (the latency settles after a route change: again every second)
+            static double latencyAt = 0;
+            if (CACurrentMediaTime() - latencyAt > 1) {
+                latencyAt = CACurrentMediaTime();
+                AVAudioSession* session = [AVAudioSession sharedInstance];
+                audio::set_output_latency_ms(float((session.outputLatency + session.IOBufferDuration) * 1000 +
+                                                   (route == kRenderer ? margin : 0)));
+            }
             // the route: a unit pulls the mix (the six as they are, or folded to stereo), or this thread feeds the renderer
             if (g_route != route) {
                 const int to = g_route;

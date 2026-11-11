@@ -3528,6 +3528,17 @@ void tab_audio() {
     if (ImGui::IsItemDeactivatedAfterEdit())
         hostui::post([pad_volume] { audio::set_gamepad_sounds_volume(pad_volume / 100.0f); });
     help("Play sounds from the GamePad speaker through your main speakers during TV play. Applies immediately and is remembered. Master volume also applies.");
+    if (remote_pad::audio_wanted()) {
+        int extra = audio::pad_audio_extra_ms();
+        ImGui::SetNextItemWidth(260);
+        if (ImGui::SliderInt("iPhone GamePad sound delay", &extra, -100, 300, "%+d ms", ImGuiSliderFlags_AlwaysClamp))
+            hostui::post([extra] { audio::set_pad_audio_extra_ms(extra, false); });
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            hostui::post([extra] { audio::set_pad_audio_extra_ms(extra); });
+        help("The phone plays the GamePad's sound held back by this device's own delay, as far as it is known. A TV or "
+             "receiver adds its own: if the phone's sound comes early (an echo), raise this; late, lower it. "
+             "Applies at once and is remembered.");
+    }
     bool menu_sounds_on = menu_sounds::option();
     if (ImGui::Checkbox("Menu sounds", &menu_sounds_on))
         hostui::post([menu_sounds_on] { menu_sounds::set_option(menu_sounds_on); });

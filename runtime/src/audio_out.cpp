@@ -538,6 +538,24 @@ void set_requested_surround(bool enabled) {
     hostui::set("audioSpeakers", enabled ? "surround" : "stereo");
 }
 void set_host_target_ms(int ms) { g_host_target_ms = ms; }
+static std::atomic<int> g_output_latency_frames{0};
+int output_latency_frames() { return g_output_latency_frames; }
+static std::atomic<int> g_pad_extra_ms{0};
+int pad_audio_extra_ms() {
+    static const bool loaded = [] {
+        if (const char* e = getenv("WWHD_PAD_AUDIO_EXTRA_MS")) g_pad_extra_ms = atoi(e);
+        else if (std::string v; hostui::get("audioPadExtraMs", v) && !v.empty()) g_pad_extra_ms = atoi(v.c_str());
+        return true;
+    }();
+    (void)loaded;
+    return g_pad_extra_ms;
+}
+void set_pad_audio_extra_ms(int ms, bool save) {
+    pad_audio_extra_ms();  // (the saved value first, so it can't overwrite this one later)
+    g_pad_extra_ms = ms;
+    if (save && !getenv("WWHD_PAD_AUDIO_EXTRA_MS")) hostui::set("audioPadExtraMs", std::to_string(ms));
+}
+void set_output_latency_ms(float ms) { g_output_latency_frames = int(ms * kRate / 1000); }
 bool spatial_surround() {
     return g_host_output && g_channels == 6;
 }

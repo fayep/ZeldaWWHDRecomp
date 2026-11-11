@@ -14,7 +14,14 @@ bool requested_surround();
 // 5.1 rendered by the system's Spatial Audio (AirPods, the device's speakers): the six channels go there as a
 // named layout, whose surrounds are at the sides (Ls Rs, the default) or behind (Rls Rrs). Applies at once, saved.
 bool spatial_surround();
-void set_host_target_ms(int ms);  // the host rendering the mix: how much the mixer keeps queued for it (8 ms default)
+void set_host_target_ms(int ms);
+// the output's own latency after this side's queue (the host measures it: the route's latency and I/O buffer)
+int output_latency_frames();
+// the iPhone GamePad's sound: more delay (ms) for what the route doesn't report (a TV's or receiver's own
+// processing). Settings > Audio; saved; applies at once. WWHD_PAD_AUDIO_EXTRA_MS starts with a value, not saved.
+int pad_audio_extra_ms();
+void set_pad_audio_extra_ms(int ms, bool save = true);
+void set_output_latency_ms(float ms);  // the host rendering the mix: how much the mixer keeps queued for it (8 ms default)
 bool rear_surrounds();
 void set_rear_surrounds(bool rear);
 void set_requested_surround(bool enabled);      // save for next start
