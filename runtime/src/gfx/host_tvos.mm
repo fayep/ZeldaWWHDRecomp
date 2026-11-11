@@ -8,6 +8,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
+#import <GameController/GameController.h>
 
 #include <csignal>
 #include <mach/mach.h>
@@ -126,15 +127,17 @@ static bool g_finger_overlay = false;
 #endif
 @end
 
-@interface WWViewController : UIViewController
+// A GCEventViewController with controller interaction off: a controller's buttons go to the game alone, not
+// also to UIKit as remote presses (B / Circle would be Back, which leaves the app on an Apple TV; the Menu
+// button the game's Home / Settings rather than the Home screen)
+@interface WWViewController : GCEventViewController
 @end
 @implementation WWViewController
 - (void)loadView {
     self.view = [WWMetalView new];
     self.view.backgroundColor = UIColor.blackColor;
+    self.controllerUserInteractionEnabled = NO;
 }
-// the controller's Menu button goes to the game (its Home / Settings), not back to the Home screen
-- (BOOL)controllerUserInteractionEnabled { return NO; }
 @end
 
 static WWMetalView* g_view = nil;
