@@ -11,6 +11,12 @@ void init();                                    // opens the default output devi
 int channels();                                 // 2 or 6, effective device mode
 void pull_interleaved(int16_t* out, uint32_t frames);  // the mix (channels() per frame), for a host that renders it itself
 bool requested_surround();
+// 5.1 rendered by the system's Spatial Audio (AirPods, the device's speakers): the six channels go there as a
+// named layout, whose surrounds are at the sides (Ls Rs, the default) or behind (Rls Rrs). Applies at once, saved.
+bool spatial_surround();
+void set_host_target_ms(int ms);  // the host rendering the mix: how much the mixer keeps queued for it (8 ms default)
+bool rear_surrounds();
+void set_rear_surrounds(bool rear);
 void set_requested_surround(bool enabled);      // save for next start
 // Master volume 0..1 for the game and mod mix (issue #124). Applied live; saved for the next start
 // when `save` is set (the settings slider saves once on release, not on every step).

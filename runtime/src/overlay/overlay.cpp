@@ -3542,6 +3542,13 @@ void tab_audio() {
         if (combo("Speakers", &speakers, "Stereo\0Surround 5.1\0"))
             hostui::post([speakers] { audio::set_requested_surround(speakers == 1); });
         note("Restart the game after changing Speakers.");
+        if (audio::spatial_surround()) {
+            int rear = audio::rear_surrounds() ? 1 : 0;
+            if (combo("Surround placement", &rear, "Side\0Rear\0"))
+                hostui::post([rear] { audio::set_rear_surrounds(rear == 1); });
+            help("Where Spatial Audio places the two surround channels: at your sides (5.1 with side surrounds) or "
+                 "behind you (5.1 with rear surrounds). Applies at once.");
+        }
     }
     if (audio::surround_fallback())
         note("Surround 5.1 unavailable on this output. Using stereo; restart after connecting a 5.1 device.");
