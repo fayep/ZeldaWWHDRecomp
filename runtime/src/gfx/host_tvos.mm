@@ -240,10 +240,10 @@ static void start_memory_log() {
     dispatch_resume(timer);
 }
 
-// Code mods on an Apple TV come built into the app (tvos/README.md, tvos/bundle_mods.py): GuestMods holds each
-// module built for tvOS (guest_mods.cpp bundled_module), ModManager the mod manager's storage the Mac prepared
-// (the packages, on and trusted). A new app with another seed (its seed.txt) replaces the profile and those
-// packages; the player's choices made on the TV last until then.
+// Code mods on an Apple TV, iPhone or iPad come built into the app (tvos/README.md, tvos/bundle_mods.py): GuestMods
+// holds each module built for the app's platform (guest_mods.cpp bundled_module), ModManager the mod manager's
+// storage the Mac prepared (the packages, on and trusted). A new app with another seed (its seed.txt) replaces the
+// profile and those packages; the player's choices made on the device last until then.
 static void install_bundled_mods(NSString* user) {
     NSFileManager* fm = [NSFileManager defaultManager];
     NSString* app = [NSBundle mainBundle].bundlePath;
