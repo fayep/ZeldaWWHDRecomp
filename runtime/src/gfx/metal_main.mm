@@ -364,6 +364,18 @@ void copy_to_scan(uint32_t cb, uint32_t target) {
     if (log_this_frame()) LOG("[scan] copy %08X to %s", cb, (target & 1) ? "TV" : "DRC");
     Screen& scr = (target & 1) ? R.tv : R.drc;
     Surface* s = surface_from_color_buffer(cb);
+    // WWHD_LOG_SCAN=1: one line whenever a screen's picture comes from another buffer (or none)
+    static const bool logScan = getenv("WWHD_LOG_SCAN") != nullptr;
+    if (logScan) {
+        static uint64_t last[2] = {~0ull, ~0ull};
+        const int i = (target & 1) ? 0 : 1;
+        const uint64_t key = s && s->tex ? (uint64_t(s->addr) << 32) ^ (uint64_t(s->width) << 16) ^ s->height ^ (uint64_t(s->format) << 48) : 0;
+        if (key != last[i]) {
+            last[i] = key;
+            if (s && s->tex) LOG("[scan] frame %llu: %s from %08X %ux%u fmt %X", (unsigned long long)R.frame, i ? "GamePad" : "TV", s->addr, s->width, s->height, s->format);
+            else LOG("[scan] frame %llu: %s from color buffer %08X: no surface, the last picture stays", (unsigned long long)R.frame, i ? "GamePad" : "TV", cb);
+        }
+    }
     if (!s || !s->tex) return;
     end_encoder();
     // the image as rendered (internal resolution); the present pass scales it to the window

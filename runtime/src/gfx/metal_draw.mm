@@ -1806,6 +1806,123 @@ static void bind_stage(id<MTLRenderCommandEncoder> enc, const uint32_t* regs, Sh
     }
 }
 
+// ---------------------------------------------------------------- pass timing (diagnostic)
+// WWHD_PASS_TIMING=1: each game render pass's GPU time, its vertex and fragment stages timed apart (counter
+// samples at each stage's start and end; a tile-based GPU runs one pass's vertex stage while earlier passes'
+// fragments still run, so a pass's start to end would count waiting), summed per colour target; every 300
+// frames one line for each target with the most fragment time.
+namespace passtime {
+static const bool g_on = getenv("WWHD_PASS_TIMING") != nullptr;
+constexpr NSUInteger kSamples = 4096;  // four per pass
+struct Pass { uint32_t addr, w, h, fmt; bool depth; };
+struct Buf { id<MTLCounterSampleBuffer> sb; std::vector<Pass> passes; };
+using Key = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t, bool>;
+static std::mutex mu;
+static std::vector<id<MTLCounterSampleBuffer>> pool;
+struct Total { double vertexNs = 0, fragmentNs = 0; uint64_t passes = 0; };
+static std::map<Key, Total> totals;
+static uint64_t lastLogFrame = 0;
+static MTLTimestamp calGpu = 0;
+static double calNs = 0, nsPerTick = 1.0;
+static Buf* cur = nullptr;
+static __weak id<MTLCommandBuffer> curCb = nil;
+static double steady_ns() { return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+static id<MTLCounterSet> timestamp_set() {
+    static id<MTLCounterSet> set = [] () -> id<MTLCounterSet> {
+        if (![R.device supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) {
+            LOG("[passes] WWHD_PASS_TIMING: this GPU has no counter samples at pass boundaries");
+            return nil;
+        }
+        for (id<MTLCounterSet> s in R.device.counterSets)
+            if ([s.name isEqualToString:MTLCommonCounterSetTimestamp]) return s;
+        LOG("[passes] WWHD_PASS_TIMING: no timestamp counter set");
+        return nil;
+    }();
+    return set;
+}
+
+static void resolve(Buf* b) {
+    const NSUInteger n = b->passes.size();
+    NSData* data = n ? [b->sb resolveCounterRange:NSMakeRange(0, 4 * n)] : nil;
+    std::lock_guard<std::mutex> lk(mu);
+    if (data && data.length >= 4 * n * sizeof(MTLCounterResultTimestamp)) {
+        const auto* ts = (const MTLCounterResultTimestamp*)data.bytes;
+        auto span = [&](NSUInteger i) {
+            const MTLTimestamp s = ts[i].timestamp, e = ts[i + 1].timestamp;
+            return s == MTLCounterErrorValue || e == MTLCounterErrorValue || e <= s ? 0.0 : double(e - s) * nsPerTick;
+        };
+        for (NSUInteger k = 0; k < n; k++) {
+            const Pass& p = b->passes[k];
+            auto& t = totals[Key{p.addr, p.w, p.h, p.fmt, p.depth}];
+            t.vertexNs += span(4 * k);
+            t.fragmentNs += span(4 * k + 2);
+            t.passes++;
+        }
+    }
+    pool.push_back(b->sb);
+    delete b;
+    // the tick length, against the CPU clock over the run so far
+    MTLTimestamp cpu = 0, gpu = 0;
+    [R.device sampleTimestamps:&cpu gpuTimestamp:&gpu];
+    const double now = steady_ns();
+    if (gpu > calGpu && now - calNs > 1e9) nsPerTick = (now - calNs) / double(gpu - calGpu);
+    const uint64_t frame = R.frame;
+    if (frame < lastLogFrame + 300) return;
+    const double frames = double(frame - lastLogFrame);
+    lastLogFrame = frame;
+    std::vector<std::pair<Key, Total>> rows(totals.begin(), totals.end());
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.fragmentNs > b.second.fragmentNs; });
+    double vertex = 0, fragment = 0;
+    for (const auto& r : rows) vertex += r.second.vertexNs, fragment += r.second.fragmentNs;
+    LOG("[passes] frame %llu: %zu targets; per frame %.2f ms fragment, %.2f ms vertex (%.3f ns per GPU tick)",
+        (unsigned long long)frame, rows.size(), fragment / frames / 1e6, vertex / frames / 1e6, nsPerTick);
+    for (size_t i = 0; i < rows.size() && i < 12; i++) {
+        const auto& [key, t] = rows[i];
+        LOG("[passes]   %08X %ux%u fmt %X%s: fragment %.2f ms (%.0f%%), vertex %.2f ms, %.1f passes per frame", std::get<0>(key),
+            std::get<1>(key), std::get<2>(key), std::get<3>(key), std::get<4>(key) ? " +depth" : "",
+            t.fragmentNs / frames / 1e6, fragment > 0 ? 100.0 * t.fragmentNs / fragment : 0.0, t.vertexNs / frames / 1e6,
+            double(t.passes) / frames);
+    }
+    totals.clear();
+}
+
+static void attach(MTLRenderPassDescriptor* rp, Surface* const* colors, Surface* depth) {
+    if (!g_on || !timestamp_set()) return;
+    id<MTLCommandBuffer> cb = command_buffer();
+    if (cb != curCb || !cur || (cur->passes.size() + 1) * 4 > kSamples) {
+        id<MTLCounterSampleBuffer> sb = nil;
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            if (!calGpu) { MTLTimestamp cpu = 0; [R.device sampleTimestamps:&cpu gpuTimestamp:&calGpu]; calNs = steady_ns(); lastLogFrame = R.frame; }
+            if (!pool.empty()) { sb = pool.back(); pool.pop_back(); }
+        }
+        if (!sb) {
+            MTLCounterSampleBufferDescriptor* d = [MTLCounterSampleBufferDescriptor new];
+            d.counterSet = timestamp_set();
+            d.sampleCount = kSamples;
+            d.storageMode = MTLStorageModeShared;
+            NSError* err = nil;
+            sb = [R.device newCounterSampleBufferWithDescriptor:d error:&err];
+            if (!sb) { LOG("[passes] no counter sample buffer: %s", err.localizedDescription.UTF8String); return; }
+        }
+        Buf* b = new Buf{sb, {}};
+        cur = b;
+        curCb = cb;
+        [cb addCompletedHandler:^(id<MTLCommandBuffer>) { resolve(b); }];
+    }
+    const NSUInteger k = cur->passes.size();
+    Surface* c = colors[0] ? colors[0] : depth;
+    cur->passes.push_back({c ? c->addr : 0, c ? c->width : 0, c ? c->height : 0, c ? c->format : 0, depth != nullptr});
+    MTLRenderPassSampleBufferAttachmentDescriptor* a = rp.sampleBufferAttachments[0];
+    a.sampleBuffer = cur->sb;
+    a.startOfVertexSampleIndex = 4 * k;
+    a.endOfVertexSampleIndex = 4 * k + 1;
+    a.startOfFragmentSampleIndex = 4 * k + 2;
+    a.endOfFragmentSampleIndex = 4 * k + 3;
+}
+}  // namespace passtime
+
 // ---------------------------------------------------------------- render pass
 static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Surface* depth, uint32_t depthSlice) {
     if (R.enc) {
@@ -1843,6 +1960,7 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
         any = true;
     }
     if (!any) return false;
+    passtime::attach(rp, colors, depth);
     R.enc = [command_buffer() renderCommandEncoderWithDescriptor:rp];
     R.enc.label = @"metal_draw.mm:1811";  // (named for WWHD_GPU_ERRORS: which pass faulted)
     for (int i = 0; i < 8; i++) {
@@ -2807,6 +2925,45 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     // post effects, which would lose the islands and characters)
     if (!readsPicture && !colors[0] && depth && clouds_shadow_depth(depth)) readsPicture = true;
     if (readsPicture) clouds_shadows_now();
+    // test aid: WWHD_TEST_TARGET_TRACE=854x480:19@600 lists the draws into a colour target of that guest size and
+    // format, with the textures each reads, in every 600th frame
+    {
+        struct TargetSpec { uint32_t w, h, fmt; uint64_t every; };
+        static const std::vector<TargetSpec> traces = [] {
+            std::vector<TargetSpec> v;
+            for (const char* p = getenv("WWHD_TEST_TARGET_TRACE"); p && *p;) {
+                TargetSpec t{};
+                unsigned long long every = 0;
+                int n = 0;
+                if (sscanf(p, "%ux%u:%x@%llu%n", &t.w, &t.h, &t.fmt, &every, &n) != 4 || !every) break;
+                t.every = every;
+                v.push_back(t);
+                p += n;
+                if (*p != ',') break;
+                ++p;
+            }
+            return v;
+        }();
+        const Surface* c0 = colors[0];
+        for (const auto& t : traces) {
+            if (!c0 || c0->width != t.w || c0->height != t.h || c0->format != t.fmt || R.frame % t.every) continue;
+            char buf[1024];
+            int n = snprintf(buf, sizeof buf, "[target] frame %llu draw into %08X %ux%u fmt %X: ps %08X prim %X count %u depth %s; reads",
+                             (unsigned long long)R.frame, c0->addr, c0->width, c0->height, c0->format, regs[mmSQ_PGM_START_PS] << 8,
+                             prim, count, depth ? "yes" : "no");
+            for (Shader* sh : {vs, ps}) {
+                const uint32_t texBase = sh == vs ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS;
+                for (int u = 0; u < sh->dec->textureUnitListCount && n < (int)sizeof buf - 64; u++) {
+                    const uint8_t unit = sh->dec->textureUnitList[u];
+                    const Surface* s = sampled_texture(&regs[texBase + unit * 7], sh->dec->textureUsesDepthCompare[unit]);
+                    n += s ? snprintf(buf + n, sizeof buf - n, " %s%u=%08X %ux%u fmt %X", sh == vs ? "v" : "p", unit, s->addr, s->width,
+                                      s->height, s->format)
+                           : snprintf(buf + n, sizeof buf - n, " %s%u=?", sh == vs ? "v" : "p", unit);
+                }
+            }
+            LOG("%s", buf);
+        }
+    }
     if (!ensure_pass(colors, colorSlices, depth, depthSlice)) { g_skip[SK_PASS]++; return; }
     rprof::mark(rprof::kPass);
     if (cloud_proto::g_active_seq) clouds_mark_start(colors, colorSlices, depth, depthSlice, ensure_pass);
