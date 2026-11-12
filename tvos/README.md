@@ -55,5 +55,10 @@ The app contains code and files from your own game: it is for your own devices o
 4. Start it from the Apple TV's home screen. The iPhone GamePad is on by default on an Apple TV (Settings >
    Controls > iPhone GamePad turns it off, and that is remembered).
 
+Code mods: the TV can't build them, so the Mac builds them into the app. Prepare the mods in a game on the
+Mac with code mods on (install them, switch them on), build the app with game code translated for code mods,
+then `python3 tvos/bundle_mods.py --app build/tvos/WindWakerHD.app --manager <that ModManager folder> --sign
+<identity>` before signing the app (step 3). Options change on the TV; another set of mods needs another app.
+
 Still to do: setup building and installing it; saves kept in iCloud (CloudKit), in step with the Mac; a
 settings panel for the Siri Remote.
