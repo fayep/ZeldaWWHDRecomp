@@ -1629,6 +1629,8 @@ static struct AppleUI {
     bool message_bad = false;
     bool building = false, confirm_install = false;
     char prefix[128] = "", icloud[128] = "";  // the apps' identifiers (apple_status's settings, edited here)
+    bool save_settings = false;                // copy the settings and save states with the save
+    bool saving = false;
 } P;
 
 static void apple_reload() { P.loaded = false, P.have_state = false; }
@@ -1658,7 +1660,7 @@ static void apple_read(const J& ev) {
     const bool ok = ev.boolean("ok");
     if (!ok) {
         P.loaded = P.loaded || cmd == "apple_status";
-        P.building = false;
+        P.building = false, P.saving = false;
         P.message = ev.str("message"), P.message_bad = true;
         if (cmd == "apple_build" && A.current >= 0 && A.current < (int)A.steps.size()) A.steps[A.current].state = 3;
         return;
@@ -1687,6 +1689,9 @@ static void apple_read(const J& ev) {
                     ". Install it on a device below.";
         P.message_bad = false;
         A.queue.push_back({"apple_status", ""});
+    } else if (cmd == "apple_save") {
+        P.saving = false;
+        P.message = "Done.", P.message_bad = false;
     } else if (cmd == "apple_install") {
         P.message = "Installed. Start Wind Waker HD on the device.", P.message_bad = false;
         A.queue.push_back({"apple_device_state", "\"app\": " + jstr(apple_app_id()) + ", \"device\": " + jstr(P.device)});
@@ -1860,6 +1865,31 @@ static void screen_apple() {
                      request("apple_install", "\"app\": " + jstr(apple_app_id()) + ", \"device\": " + jstr(P.device));
             }
             if (P.confirm_install) colored(BAD, "Click Install again to install anyway and switch those mods off.");
+            // the save between this Mac and the device's app (whatever a copy replaces is backed up on the Mac first)
+            if (inst && inst->t == J::Obj) {
+                ImGui::Spacing();
+                heading("Saves", 16.0f);
+                const bool can = idle && !P.saving;
+                auto save_request = [&](const std::string& fields) {
+                    P.saving = true, P.message = "Working...", P.message_bad = false;
+                    request("apple_save", "\"app\": " + jstr(apple_app_id()) + ", \"device\": " + jstr(P.device) + ", " + fields);
+                };
+                if (button("Copy this Mac's save to the device", ImVec2(0, 0), false, can))
+                    save_request(std::string("\"action\": \"to-device\", \"settings\": ") + (P.save_settings ? "true" : "false"));
+                ImGui::SameLine();
+                if (button("Copy the device's save to this Mac", ImVec2(0, 0), false, can)) save_request("\"action\": \"from-device\"");
+                ImGui::SameLine();
+                if (button("Back up the device", ImVec2(0, 0), false, can)) save_request("\"action\": \"backup\"");
+                ImGui::Checkbox("Also copy this Mac's settings and save states to the device", &P.save_settings);
+                if (const J* others = P.state.get("others"))
+                    for (auto& o : others->a) {
+                        const std::string label = "Take the save and settings from " + o.str("bundle_id") + "##from" + o.str("bundle_id");
+                        if (button(label.c_str(), ImVec2(0, 0), false, can))
+                            save_request("\"action\": \"to-device\", \"settings\": true, \"from_app\": " + jstr(o.str("bundle_id")));
+                    }
+                muted("The game must be closed on the device. Whatever a copy replaces is backed up on this Mac first "
+                      "(data/apple/backups in the install).");
+            }
         }
     }
     if (details_header()) log_pane(160);
