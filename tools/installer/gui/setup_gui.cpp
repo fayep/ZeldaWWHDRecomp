@@ -889,6 +889,8 @@ static int step_index(const std::string& id) {
 
 static void rando_read(const J& ev);  // the Randomizer page (below)
 static void apple_read(const J& ev);  // the Apple TV, iPhone or iPad page (below)
+static bool g_repair_for_apple = false;  // a repair started from that page (code mods on): back to it when done
+static void apple_reload();
 
 static void handle_reply(const J& ev) {
     std::string cmd = ev.str("cmd");
@@ -940,7 +942,8 @@ static void handle_reply(const J& ev) {
             if (A.start_decomp) g_exe = A.decomp_exe;
             A.installed = true;
             addlog("Setup finished.");
-            go(A.save_exists ? Screen::Done : Screen::Save);
+            if (g_repair_for_apple) g_repair_for_apple = false, apple_reload(), go(Screen::Apple);
+            else go(A.save_exists ? Screen::Done : Screen::Save);
         } else {
             if (A.current >= 0 && A.current < (int)A.steps.size()) A.steps[A.current].state = 3;
             A.error_msg = ev.str("message");
@@ -1628,6 +1631,8 @@ static struct AppleUI {
     char prefix[128] = "", icloud[128] = "";  // the apps' identifiers (apple_status's settings, edited here)
 } P;
 
+static void apple_reload() { P.loaded = false, P.have_state = false; }
+
 static const char* apple_app_id() { return P.app == 0 ? "tv" : "iphone"; }
 
 static const J* apple_app_status() {
@@ -1777,7 +1782,14 @@ static void screen_apple() {
     }
     if (const J* mods = P.status.get("mods")) {
         ImGui::Spacing();
-        if (!mods->boolean("on")) muted("Code mods are off on this Mac, so the app gets none.");
+        if (!mods->boolean("on")) {
+            muted("Code mods are off on this Mac, so the app gets none. Switching them on rebuilds this Mac's game "
+                  "(a few minutes); then the app can have the mods you use there.");
+            if (button("Switch on code mods", ImVec2(0, 0), false, idle)) {
+                A.code_mods = true, g_repair_for_apple = true;
+                start_install("installed");
+            }
+        }
         else {
             std::string in = apple_names(mods->get("included"));
             ImGui::TextWrapped("Mods built into the app: %s", in.empty() ? "none" : in.c_str());
