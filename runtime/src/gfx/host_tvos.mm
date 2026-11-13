@@ -29,6 +29,7 @@
 #include "../interp.h"
 #include "remote_video.h"
 #include "../mods/save_folder.h"
+#include "cloud_save.h"
 #include "../mods/mods.h"
 #include "../remote_pad/remote_pad.h"
 #include "../audio_out.h"
@@ -274,14 +275,18 @@ static void install_bundled_mods(NSString* user) {
     NSLog(@"[mods] the app's mods installed (seed %@)", stamp);
 }
 
-// The save in the app's iCloud Drive folder, "Wind Waker HD" in it, so it is the same on the Apple TV, iPhone, iPad
-// and Mac signed in to the same iCloud (a Mac chooses that folder in Settings > Saves). The container is the one the
+// iPhone, iPad: the save in the app's iCloud Drive folder, "Wind Waker HD" in it, so it is the same on the iPhone,
+// iPad and Mac signed in to the same iCloud (a Mac chooses that folder in Settings > Saves; the Apple TV, which gets no
+// iCloud Drive, has it through CloudKit: cloud_save.h). The container is the one the
 // app's Info.plist names (NSUbiquitousContainers: the build's WWHD_ICLOUD_CONTAINER, or setup's), which its
 // signature must carry; none: the save stays in the Caches folder. Through the save folder choice
 // (mods/save_folder.h): the first time, the save here is copied there (or, if one is there already, the player
 // picks which to keep); every start checks the folder before the game reads it. Files iCloud has not put on this
 // device yet are downloaded first. Signed out of iCloud: the save stays in the Caches folder, as without iCloud.
 static void use_icloud_save_folder(NSString* save) {
+#if TARGET_OS_TV
+    return;  // an Apple TV app gets no iCloud Drive: its save goes through CloudKit (cloud_save.h)
+#endif
     NSDictionary* containers = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSUbiquitousContainers"];
     NSString* identifier = [containers isKindOfClass:[NSDictionary class]] ? containers.allKeys.firstObject : nil;
     if (!identifier) return;
@@ -628,7 +633,10 @@ static void* run_game(void*) {
 @implementation WWSceneDelegate
 // suspended in the background, the game can't keep its save folder's lock fresh: it gives it back meanwhile
 // (mods/save_folder.h pause_lock)
-- (void)sceneDidEnterBackground:(UIScene*)scene { save_folder::pause_lock(); }
+- (void)sceneDidEnterBackground:(UIScene*)scene {
+    save_folder::pause_lock();
+    cloud_save::flush();
+}
 - (void)sceneWillEnterForeground:(UIScene*)scene {
     save_folder::resume_lock();
     uikit_audio_route_check();  // (the output may have changed meanwhile)

@@ -128,7 +128,8 @@ def find_profile(platform, bundle_id, team=None, now=None, icloud=None):
                 continue
             if not ents.get("get-task-allow"):
                 continue  # a distribution profile: devices need a development one
-            if icloud and icloud not in ents.get("com.apple.developer.ubiquity-container-identifiers", []):
+            if icloud and (icloud not in ents.get("com.apple.developer.icloud-container-identifiers", []) or
+                           (platform == "iOS" and icloud not in ents.get("com.apple.developer.ubiquity-container-identifiers", []))):
                 continue
             import hashlib
             certs = [hashlib.sha1(c).hexdigest().upper() for c in prof.get("DeveloperCertificates", [])]
@@ -141,9 +142,10 @@ def find_profile(platform, bundle_id, team=None, now=None, icloud=None):
                 best = (rank, path, prof, identity)
     if not best and icloud:
         raise Error("No development profile for %s with the iCloud container %s. In the Apple Developer site (or "
-                    "Xcode, Signing & Capabilities), give the App ID %s the iCloud capability (iCloud Documents) with "
-                    "that container, then let Xcode download its profile. Profiles found: %s"
-                    % (bundle_id, icloud, bundle_id, "; ".join(seen) or "none"))
+                    "Xcode, Signing & Capabilities), give the App ID %s the iCloud capability (%s) with that "
+                    "container, then let Xcode download its profile. Profiles found: %s"
+                    % (bundle_id, icloud, bundle_id, "CloudKit and iCloud Documents" if platform == "iOS" else "CloudKit",
+                       "; ".join(seen) or "none"))
     if not best:
         raise Error("No development profile for %s apps%s with its certificate in this Mac's keychain. Open Xcode, "
                     "sign in to your Apple Developer account (Settings > Accounts) and let it make the team's "
@@ -153,14 +155,18 @@ def find_profile(platform, bundle_id, team=None, now=None, icloud=None):
 
 
 def entitlements(prof, bundle_id, icloud=None):
+    """with ICLOUD: CloudKit (the save's record, cloud_save.h) everywhere, and iCloud Drive (its folder) on an
+    iPhone / iPad: an Apple TV app gets no iCloud Drive"""
     team = prof["TeamIdentifier"][0]
     out = {"application-identifier": "%s.%s" % (team, bundle_id), "com.apple.developer.team-identifier": team,
            "get-task-allow": True}
     if icloud:
+        drive = "iOS" in prof.get("Platform", [])
         out.update({"com.apple.developer.icloud-container-identifiers": [icloud],
-                    "com.apple.developer.ubiquity-container-identifiers": [icloud],
-                    "com.apple.developer.icloud-services": ["CloudDocuments"],
+                    "com.apple.developer.icloud-services": ["CloudKit"] + (["CloudDocuments"] if drive else []),
                     "com.apple.developer.icloud-container-environment": "Development"})
+        if drive:
+            out["com.apple.developer.ubiquity-container-identifiers"] = [icloud]
     return out
 
 
@@ -680,10 +686,12 @@ def build_app(setup, ctx, which, team=None, bundle_prefix="org.wwhdrecomp", sign
     with open(os.path.join(pkg_sdk, "Info.plist"), "rb") as f:
         info = plistlib.load(f)
     info["CFBundleIdentifier"] = bundle_id
+    info.pop("NSUbiquitousContainers", None)
+    info.pop("WWHDCloudKitContainer", None)
     if icloud:
-        info["NSUbiquitousContainers"] = icloud_info(icloud)
-    else:
-        info.pop("NSUbiquitousContainers", None)
+        info["WWHDCloudKitContainer"] = icloud
+        if platform == "iOS":
+            info["NSUbiquitousContainers"] = icloud_info(icloud)
     # what the device's installed app says (device_state): the release and when this app was built
     info["CFBundleShortVersionString"] = ctx.version
     info["CFBundleVersion"] = time.strftime("%Y%m%d.%H%M%S")
