@@ -956,6 +956,11 @@ def build_app(setup, ctx, which, team=None, bundle_prefix="org.wwhdrecomp", sign
         plistlib.dump(info, f)
     if signed:
         stage("apple_sign")
+        # the profile again: Xcode may have replaced it during the build (a device or capability registered)
+        try:
+            prof_path, prof, identity = find_profile(platform, bundle_id, team, icloud=icloud)
+        except Error:
+            prof_path, prof, identity = register_with_xcode(platform, bundle_id, None, team, icloud, env, log)
         sign(str(staging), prof_path, prof, identity, bundle_id, env, log, icloud=icloud)
     shutil.rmtree(setup.longpath(str(app)), ignore_errors=True)
     os.replace(str(staging), str(app))
