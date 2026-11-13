@@ -285,7 +285,7 @@ def user_dir(setup, ctx):
 
 def shader_generation(data_dir, user_dir):
     """this Mac's active shader generation folder (None when setup had no shader template to prepare one: then
-    only the shaders the Mac's game has met go in) and its live cache folder (shader_prebuild.py)"""
+    the device library comes from the live cache: the models step and play) and its live cache folder"""
     root = Path(user_dir) / "shader-prebuild"
     live = root / "live"
     try:
@@ -295,9 +295,7 @@ def shader_generation(data_dir, user_dir):
     gen = root / active.get("generation", "")
     if active.get("generation") and (gen / "headstart.bin").is_file():
         return gen, live
-    if (live / "shaders.bin").is_file() and (live / "shaders.bin").stat().st_size > 0:
-        return None, live
-    raise Error("This Mac's game has no shaders yet: start the game and play for a while first")
+    return None, live  # (no template: the build's models step and play record the shaders)
 
 
 def sweep_models(setup, ctx, log):
@@ -359,7 +357,8 @@ def build_shader_library(setup, ctx, sdk, out, env, log):
             # no head start: the warm writes the live cache's shaders only
             wenv = dict(os.environ, **shader_prebuild.cache_environment(live.parent / "no-generation", ctx.game_dir, "metal"))
             wenv["WWHD_HEADSTART"] = "0"
-            log("no prepared shader generation: the library holds only the shaders this Mac's game has met")
+            log("no shader template here: the library holds the shaders this Mac's game has recorded (the models "
+                "step and play)")
         wenv.update(WWHD_SHADERLIB_SOURCES=str(sources), WWHD_SHADERLIB="0", WWHD_RENDERER="metal")
         log("writing the game's shaders (Metal warm of %s)" % exe)
         shader_prebuild.run_process([exe, "--game", ctx.game_dir, "--warm-shaders"], wenv, lambda: False, lambda line: None)
@@ -546,7 +545,7 @@ def report(setup, ctx, team=None, bundle_prefix="org.wwhdrecomp", icloud=None):
         shader_generation(ctx.data_dir, user_dir(setup, ctx))
         gen, _ = shader_generation(ctx.data_dir, user_dir(setup, ctx))
         shaders = check(True, "This Mac's shaders are prepared" if gen else
-                        "This Mac's game has met some shaders (no prepared shaders: the rest compile on the device)")
+                        "No shader template: the build draws the game's models on this Mac for the device's shaders")
     except Error as e:
         shaders = check(False, "", str(e), "Start the game on this Mac and play for a while")
     out["mac"] = {"game": game, "shaders": shaders}
