@@ -51,6 +51,22 @@ python3 tools/installer/setup.py --apple-device tv --apple-install-only # instal
 Setup won't install while the game is open on the device: save and quit it there first. Saves and settings on the
 device are kept when you install a new build.
 
+## Your app identifiers and iCloud saves
+
+The apps are `<prefix>.tv` and `<prefix>.ipad` (default prefix `org.wwhdrecomp`). Use your own: on the setup page
+open **App identifiers**, or pass `--apple-bundle-prefix com.example.wwhd`. Setup remembers it.
+
+To switch devices with one save, give both App IDs the iCloud capability (iCloud Documents) with one container of
+your team, e.g. `iCloud.com.example.wwhd` (Apple Developer site, Identifiers; or Xcode's Signing & Capabilities),
+and let Xcode download the profiles. Then enter the container on the setup page (or `--apple-icloud-container`).
+The save is then kept in iCloud Drive's "Wind Waker HD" folder, the same on the Apple TV, iPhone and iPad; a Mac
+uses it too when Settings > Saves > Save folder points at
+`~/Library/Mobile Documents/iCloud~com~example~wwhd/Documents/Wind Waker HD`. On first start the app copies its
+save there, or asks which to keep if both have one.
+
+Changing the prefix installs a new app next to the old one: the old app and its save stay until you delete it.
+Copy a save over first if you want to keep it (setup's device check lists the other installs).
+
 ## Mods
 
 The code mods switched on in the Mac's game are built into the app. A mod that has never run on the Mac gets its
@@ -60,7 +76,7 @@ switched off when you install, and the setup page warns you first.
 ## Known limits
 
 - Shaders the Mac's game hasn't met are compiled on the device when they first appear (a stutter).
-- iCloud saves on the iPad need your own iCloud container, which setup doesn't set up yet.
+- The Apple TV's iCloud save is new: tell us how it goes.
 - Provisioning profiles expire after a year: build and install again then.
 
 Please report what you find, with the device, the setup log and what you did. How it works and what's still open:
