@@ -657,6 +657,188 @@ def device_state(setup, ctx, which, device, bundle_prefix="org.wwhdrecomp"):
     return out
 
 
+# ------------------------------------------------------------------------------------------------------- saves
+# The save between this Mac's game and a device's app: the save's user/*.sav files, copied with devicectl into or
+# out of the app's container (an app installed by this developer team only). Whatever a copy replaces is backed
+# up on the Mac first (data/apple/backups). A device app that keeps its save in iCloud Drive (iPhone, iPad) has it
+# in this Mac's iCloud Drive folder too: the copy goes there, and iCloud brings it to the device.
+
+SETTINGS_FILES = ("display.plist", "controls.json")
+
+
+def mac_save_dir(setup, ctx):
+    """the folder this Mac's game keeps its save in: Settings > Saves' choice, else data/save"""
+    try:
+        with open(os.path.join(user_dir(setup, ctx), "save-folder.json"), encoding="utf-8") as f:
+            folder = json.load(f).get("folder", "")
+        if folder:
+            return Path(folder)
+    except (OSError, ValueError):
+        pass
+    return Path(ctx.data_dir) / "save"
+
+
+def mac_game_running(setup, ctx):
+    exe = os.path.join(ctx.data_dir, "bin", ctx.manifest["exe"])
+    return any(subprocess.run(["pgrep", "-f", e], stdout=subprocess.DEVNULL).returncode == 0
+               for e in {exe, setup_game_exe(setup, ctx)})
+
+
+def _copy_from(env, device, bundle_id, source, dest):
+    p = subprocess.run(["xcrun", "devicectl", "device", "copy", "from", "--device", device, "--domain-type",
+                        "appDataContainer", "--domain-identifier", bundle_id, "--source", source, "--destination",
+                        str(dest)], env=env, capture_output=True, text=True)
+    return p.returncode == 0 and Path(dest).exists()
+
+
+def _copy_to(env, device, bundle_id, source, dest):
+    p = subprocess.run(["xcrun", "devicectl", "device", "copy", "to", "--device", device, "--domain-type",
+                        "appDataContainer", "--domain-identifier", bundle_id, "--source", str(source), "--destination",
+                        dest], env=env, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise Error("Copying %s to the device failed: %s" % (Path(source).name, (p.stderr or p.stdout).strip()[-300:]))
+
+
+def _sav_files(folder):
+    user = Path(folder) / "user"
+    return sorted(p for p in user.glob("*.sav") if p.is_file()) if user.is_dir() else []
+
+
+def _device_target(setup, ctx, which, device, bundle_prefix):
+    kind, sdk, platform, suffix = KINDS[which]
+    xc = xcode_info()
+    if not xc:
+        raise Error("Xcode isn't installed")
+    env = xcode_env(xc["developer_dir"])
+    target = pick_device(platform, device, env)
+    return env, target, "%s.%s" % (bundle_prefix, suffix), ctx.manifest.get("apple", {}).get(kind, {}).get("exe", "WindWakerHD")
+
+
+def _not_running(env, target, exe):
+    try:
+        if running(target["id"], exe, env):
+            raise Error("Wind Waker HD is open on %s: save, quit it there (also from the app switcher), then try again"
+                        % target["name"])
+    except Error as e:
+        if "is open" in str(e):
+            raise
+        raise Error("%s. Unlock the device and try again." % e)
+
+
+def backup_device(setup, ctx, which, device=None, bundle_prefix="org.wwhdrecomp", bundle_id=None, log=print):
+    """The device app's save and settings (Library/Caches/save and user, without the shader caches) into
+    data/apple/backups/<bundle id>-<time>. Returns that folder."""
+    env, target, own_id, exe = _device_target(setup, ctx, which, device, bundle_prefix)
+    bundle_id = bundle_id or own_id
+    out = Path(ctx.data_dir) / "apple" / "backups" / ("%s-%s" % (bundle_id, time.strftime("%Y%m%d-%H%M%S")))
+    out.mkdir(parents=True)
+    got = [part for part in ("save", "user") if _copy_from(env, target["id"], bundle_id, "Library/Caches/" + part, out / part)]
+    shutil.rmtree(out / "user" / "shader-prebuild", ignore_errors=True)
+    if not got:
+        shutil.rmtree(out, ignore_errors=True)
+        raise Error("Nothing to back up from %s on %s (is the app installed and started once?)" % (bundle_id, target["name"]))
+    log("backed up %s from %s to %s" % (" and ".join(got), target["name"], out))
+    return out
+
+
+def _device_icloud_folder(folder):
+    """a device's iCloud Drive save folder -> the same folder on this Mac (iCloud Drive brings it across)"""
+    marker = "/Mobile Documents/"
+    if marker not in folder:
+        return None
+    return Path.home() / "Library" / "Mobile Documents" / folder.split(marker, 1)[1]
+
+
+def save_to_device(setup, ctx, which, device=None, bundle_prefix="org.wwhdrecomp", settings=False, from_app=None, log=print):
+    """This Mac's save (or, FROM_APP: another app's on the device, e.g. one installed under an earlier identifier)
+    into the device app; SETTINGS: also its settings and save states. Refused while the game is open on the device;
+    the device's save and settings are backed up first. Returns what was copied."""
+    env, target, bundle_id, exe = _device_target(setup, ctx, which, device, bundle_prefix)
+    _not_running(env, target, exe)
+    backup = backup_device(setup, ctx, which, device, bundle_prefix, log=log)
+    with tempfile.TemporaryDirectory() as tmp:
+        if from_app:
+            source = backup_device(setup, ctx, which, device, bundle_prefix, bundle_id=from_app, log=log)
+            save, settings_dir = source / "save", source / "user"
+        else:
+            if mac_game_running(setup, ctx):
+                raise Error("The game is open on this Mac: quit it first, so its save is complete")
+            save, settings_dir = mac_save_dir(setup, ctx), Path(user_dir(setup, ctx))
+        files = _sav_files(save)
+        if not any(f.name == "cking.sav" for f in files):
+            raise Error("No save in %s" % save)
+        # the device app's own save folder choice: an iPhone / iPad app with its save in iCloud Drive
+        choice = None
+        if (backup / "user" / "save-folder.json").is_file():
+            try:
+                choice = json.loads((backup / "user" / "save-folder.json").read_text(encoding="utf-8")).get("folder")
+            except ValueError:
+                pass
+        drive = _device_icloud_folder(choice) if choice else None
+        if drive:
+            if (drive / "user").is_dir():
+                keep = Path(ctx.data_dir) / "apple" / "backups" / ("icloud-drive-%s" % time.strftime("%Y%m%d-%H%M%S"))
+                shutil.copytree(drive / "user", keep / "user")
+                log("backed up the iCloud Drive save to %s" % keep)
+            (drive / "user").mkdir(parents=True, exist_ok=True)
+            for f in files:
+                shutil.copy2(f, drive / "user" / f.name)
+            log("the save is in iCloud Drive (%s): the device gets it from there" % drive)
+        else:
+            for f in files:
+                _copy_to(env, target["id"], bundle_id, f, "Library/Caches/save/user/" + f.name)
+            log("copied the save (%d files) to %s" % (len(files), target["name"]))
+        copied = ["save"]
+        if settings:
+            for name in SETTINGS_FILES:
+                if (settings_dir / name).is_file():
+                    _copy_to(env, target["id"], bundle_id, settings_dir / name, "Library/Caches/user/" + name)
+                    copied.append(name)
+            states = sorted(p for p in (settings_dir / "states").glob("*") if p.is_file()) if (settings_dir / "states").is_dir() else []
+            for f in states:
+                _copy_to(env, target["id"], bundle_id, f, "Library/Caches/user/states/" + f.name)
+            if states:
+                copied.append("save states")
+            log("copied %s to %s" % (", ".join(copied[1:]) or "no settings", target["name"]))
+    return copied
+
+
+def save_from_device(setup, ctx, which, device=None, bundle_prefix="org.wwhdrecomp", log=print):
+    """The device app's save into this Mac's save folder (its save backed up first). Refused while the game is open
+    on either."""
+    env, target, bundle_id, exe = _device_target(setup, ctx, which, device, bundle_prefix)
+    _not_running(env, target, exe)
+    if mac_game_running(setup, ctx):
+        raise Error("The game is open on this Mac: quit it first")
+    got = backup_device(setup, ctx, which, device, bundle_prefix, log=log)
+    source = got / "save"
+    choice = None
+    if (got / "user" / "save-folder.json").is_file():
+        try:
+            choice = json.loads((got / "user" / "save-folder.json").read_text(encoding="utf-8")).get("folder")
+        except ValueError:
+            pass
+    drive = _device_icloud_folder(choice) if choice else None
+    if drive:
+        source = drive
+    files = _sav_files(source)
+    if not any(f.name == "cking.sav" for f in files):
+        raise Error("No save on %s" % target["name"])
+    dest = mac_save_dir(setup, ctx)
+    if _sav_files(dest):
+        keep = Path(ctx.data_dir) / "apple" / "backups" / ("mac-save-%s" % time.strftime("%Y%m%d-%H%M%S"))
+        shutil.copytree(dest / "user", keep / "user")
+        log("backed up this Mac's save to %s" % keep)
+    (dest / "user").mkdir(parents=True, exist_ok=True)
+    for f in _sav_files(dest):
+        if not (source / "user" / f.name).is_file():
+            f.unlink()
+    for f in files:
+        shutil.copy2(f, dest / "user" / f.name)
+    log("copied the save from %s to %s" % (target["name"], dest))
+    return str(dest)
+
+
 def pick_device(platform, device, env):
     """the reachable device of PLATFORM named DEVICE (its name or identifier), or the only one"""
     paired = devices(platform, env)
