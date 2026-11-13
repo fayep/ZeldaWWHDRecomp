@@ -646,7 +646,7 @@ def build_app(setup, ctx, which, team=None, bundle_prefix="org.wwhdrecomp", sign
     included = []
     if hooks:
         manager = os.path.join(user_dir(setup, ctx), "ModManager")
-        if os.path.isdir(manager):
+        if os.path.isfile(os.path.join(manager, "profiles.json")):
             prepare_mod_addresses(setup, ctx, log)
             out = run([sys.executable, apple_tool(setup, "bundle_mods.py"), "--app", str(staging), "--manager", manager]
                       + (["--sign", identity] if identity else []), env, log, "building the code mods into the app")
