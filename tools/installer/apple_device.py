@@ -100,10 +100,10 @@ def signing_identities():
     return ids
 
 
-def find_profile(platform, bundle_id, team=None, now=None, icloud=None):
+def find_profile(platform, bundle_id, team=None, now=None, icloud=None, device=None):
     """The best development profile for the app on PLATFORM ("tvOS" / "iOS"): one of TEAM (any team when None)
     whose App ID covers BUNDLE_ID, not expired, with a certificate whose identity is in the keychain, and (ICLOUD)
-    carrying that iCloud container.
+    carrying that iCloud container, and (DEVICE: a UDID) listing that device.
     Returns (profile path, its plist, signing identity SHA-1) or raises."""
     import datetime
     now = now or datetime.datetime.now(datetime.timezone.utc)
@@ -128,6 +128,8 @@ def find_profile(platform, bundle_id, team=None, now=None, icloud=None):
                 continue
             if not ents.get("get-task-allow"):
                 continue  # a distribution profile: devices need a development one
+            if device and not prof.get("ProvisionsAllDevices") and device not in prof.get("ProvisionedDevices", []):
+                continue
             if icloud and (icloud not in ents.get("com.apple.developer.icloud-container-identifiers", []) or
                            (platform == "iOS" and icloud not in ents.get("com.apple.developer.ubiquity-container-identifiers", []))):
                 continue
@@ -587,14 +589,15 @@ def report(setup, ctx, team=None, bundle_prefix="org.wwhdrecomp", icloud=None):
             c["signing"] = check(True, "Signing as %s (%s), profile %s until %s" % (
                 a["signing"]["identity"], a["signing"]["team_name"] or a["signing"]["team"], a["signing"]["profile"],
                 str(prof.get("ExpirationDate", ""))[:10]))
-        except Error as e:
-            if icloud:
-                c["signing"] = check(False, "", "No %s development profile for %s with the iCloud container %s"
-                                     % (platform, bundle_id, icloud), str(e))
-            else:
-                c["signing"] = check(False, "", "No %s development profile with its certificate in this Mac's keychain" % platform,
-                                     "Open Xcode, sign in to your Apple Developer account (Settings > Accounts), and build "
-                                     "any %s app for your device once so Xcode makes the team's profile" % platform)
+        except Error:
+            try:
+                found_team = team_of(platform, team)
+                c["signing"] = check(True, "The build registers %s%s with your team (%s) through Xcode" % (
+                    bundle_id, " and iCloud " + icloud if icloud else "", found_team))
+            except Error:
+                c["signing"] = check(False, "", "No %s development certificate in this Mac's keychain" % platform,
+                                     "Open Xcode, sign in to your Apple Developer account (Settings > Accounts), and "
+                                     "build any %s app for your device once so Xcode makes your certificate" % platform)
         needed = [out["xcode"]["check"], game, shaders] + list(c.values())
         a["problems"] = [x["text"] for x in needed if not x["ok"]]
         a["ready"] = not a["problems"]
@@ -874,7 +877,11 @@ def build_app(setup, ctx, which, team=None, bundle_prefix="org.wwhdrecomp", sign
     bundle_id = "%s.%s" % (bundle_prefix, suffix)
     identity = None
     if signed:
-        prof_path, prof, identity = find_profile(platform, bundle_id, team, icloud=icloud)
+        try:
+            prof_path, prof, identity = find_profile(platform, bundle_id, team, icloud=icloud)
+        except Error:
+            # the App ID or its iCloud capability isn't registered yet: Xcode does it
+            prof_path, prof, identity = register_with_xcode(platform, bundle_id, None, team, icloud, env, log)
         log("signing: %s (team %s)" % (prof.get("Name"), prof["TeamIdentifier"][0]))
     steps = [s for s in BUILD_STEPS if signed or s[0] != "apple_sign"]
     n = iter(range(1, len(steps) + 1))
@@ -956,6 +963,88 @@ def build_app(setup, ctx, which, team=None, bundle_prefix="org.wwhdrecomp", sign
     return built_app(ctx, which)
 
 
+# A device that isn't in the app's profile yet (a new Apple TV, iPhone or iPad), or an App ID or iCloud container that
+# isn't registered: Xcode registers them when it builds for that device with -allowProvisioningUpdates. Setup lets it
+# build a throwaway app with the same bundle identifier and entitlements for the device, then takes the profile
+# Xcode made.
+PBXPROJ = """// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+		A0000000000000000000000B = {isa = PBXBuildFile; fileRef = A0000000000000000000000F; };
+		A0000000000000000000000F = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A0000000000000000000000E = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = app.entitlements; sourceTree = "<group>"; };
+		A0000000000000000000000A = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Probe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000001 = {isa = PBXGroup; children = (A0000000000000000000000F, A0000000000000000000000E, A0000000000000000000000A, ); sourceTree = "<group>"; };
+		A00000000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A0000000000000000000000B, ); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000003 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000005; buildPhases = (A00000000000000000000002, ); buildRules = ( ); dependencies = ( ); name = Probe; productName = Probe; productReference = A0000000000000000000000A; productType = "com.apple.product-type.application"; };
+		A00000000000000000000004 = {isa = PBXProject; attributes = {TargetAttributes = {A00000000000000000000003 = {DevelopmentTeam = @TEAM@; ProvisioningStyle = Automatic; }; }; }; buildConfigurationList = A00000000000000000000006; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = A00000000000000000000001; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000003, ); };
+		A0000000000000000000000C = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = @SDK@; PRODUCT_NAME = Probe; SWIFT_VERSION = 5.0; @DEPLOY@ = 17.0; }; name = Debug; };
+		A0000000000000000000000D = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = @SDK@; PRODUCT_NAME = Probe; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = @TEAM@; CODE_SIGN_ENTITLEMENTS = app.entitlements; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = "@BUNDLE@"; TARGETED_DEVICE_FAMILY = "@FAMILY@"; }; name = Debug; };
+		A00000000000000000000005 = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000D, ); defaultConfigurationName = Debug; };
+		A00000000000000000000006 = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000C, ); defaultConfigurationName = Debug; };
+	};
+	rootObject = A00000000000000000000004;
+}
+"""
+
+
+def team_of(platform, team=None):
+    """the developer team to register with: TEAM, else the team of this Mac's development profiles for PLATFORM"""
+    if team:
+        return team
+    identities = signing_identities()
+    for d in PROFILE_DIRS:
+        for path in glob.glob(os.path.join(os.path.expanduser(d), "*.mobileprovision")):
+            prof = _plist_of_profile(path)
+            if prof and platform in prof.get("Platform", []) and prof.get("Entitlements", {}).get("get-task-allow"):
+                import hashlib
+                if any(hashlib.sha1(c).hexdigest().upper() in identities for c in prof.get("DeveloperCertificates", [])):
+                    return prof["TeamIdentifier"][0]
+    raise Error("No developer team found: sign in to Xcode (Settings > Accounts) and let it make a certificate")
+
+
+def register_with_xcode(platform, bundle_id, device=None, team=None, icloud=None, env=None, log=print):
+    """Lets Xcode register the App ID BUNDLE_ID with its iCloud container (ICLOUD) and DEVICE (a UDID; None: any
+    device of the platform) in the developer team, and download the profile, by building a throwaway app with the
+    same identifier and entitlements. Returns the new profile (find_profile)."""
+    team = team_of(platform, team)
+    sdk = "appletvos" if platform == "tvOS" else "iphoneos"
+    with tempfile.TemporaryDirectory() as tmp:
+        proj = Path(tmp) / "Probe.xcodeproj"
+        proj.mkdir()
+        (proj / "project.pbxproj").write_text(
+            PBXPROJ.replace("@TEAM@", team).replace("@SDK@", sdk).replace("@BUNDLE@", bundle_id)
+                   .replace("@FAMILY@", "3" if platform == "tvOS" else "1,2")
+                   .replace("@DEPLOY@", "TVOS_DEPLOYMENT_TARGET" if platform == "tvOS" else "IPHONEOS_DEPLOYMENT_TARGET"),
+            encoding="utf-8")
+        (Path(tmp) / "main.swift").write_text(
+            "import UIKit\nUIApplicationMain(CommandLine.argc, CommandLine.unsafeArgv, nil, nil)\n", encoding="utf-8")
+        ents = {}
+        if icloud:
+            ents = {"com.apple.developer.icloud-container-identifiers": [icloud],
+                    "com.apple.developer.icloud-services": ["CloudKit"] + (["CloudDocuments"] if platform == "iOS" else [])}
+            if platform == "iOS":
+                ents["com.apple.developer.ubiquity-container-identifiers"] = [icloud]
+        with open(Path(tmp) / "app.entitlements", "wb") as f:
+            plistlib.dump(ents, f)
+        log("asking Xcode to register %s%s%s and make its profile (team %s)" % (
+            bundle_id, " with iCloud " + icloud if icloud else "", " and the device " + device if device else "", team))
+        p = subprocess.run(["xcodebuild", "-project", str(proj), "-scheme", "Probe", "-configuration", "Debug",
+                            "-destination", ("id=" + device) if device else "generic/platform=" + platform,
+                            "-allowProvisioningUpdates",
+                            "-allowProvisioningDeviceRegistration", "-derivedDataPath", str(Path(tmp) / "dd"), "build"],
+                           env=env, cwd=tmp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = p.stdout.decode("utf-8", "replace")
+        if p.returncode != 0:
+            errors = [l for l in out.splitlines() if "error:" in l][-5:]
+            raise Error("Xcode couldn't register the device or make the profile:\n%s" % "\n".join(errors or out.splitlines()[-10:]))
+    return find_profile(platform, bundle_id, team, icloud=icloud, device=device)
+
+
 def install_app(setup, ctx, which, device=None, log=print):
     """Installs the app built_app() for WHICH on DEVICE (its name or identifier; the only reachable one when None).
     Refuses while the game runs there, or when that can't be checked. Returns the device."""
@@ -970,6 +1059,21 @@ def install_app(setup, ctx, which, device=None, log=print):
     exe = ctx.manifest.get("apple", {}).get(kind, {}).get("exe", "WindWakerHD")
     if running(target["id"], exe, env):
         raise Error("The game is running on %s: save, close it (in the app switcher), then install again" % target["name"])
+    # a device the app's profile doesn't list yet (a new device): Xcode registers it, and the app is signed again
+    # with the profile it makes
+    app = Path(built["path"])
+    prof = _plist_of_profile(str(app / "embedded.mobileprovision")) or {}
+    if not prof.get("ProvisionsAllDevices") and target["id"] not in prof.get("ProvisionedDevices", []):
+        with open(app / "Info.plist", "rb") as f:
+            info = plistlib.load(f)
+        bundle_id, icloud = info["CFBundleIdentifier"], info.get("WWHDCloudKitContainer")
+        team = (prof.get("TeamIdentifier") or [None])[0]
+        try:
+            prof_path, prof, identity = find_profile(platform, bundle_id, team, icloud=icloud, device=target["id"])
+        except Error:
+            prof_path, prof, identity = register_with_xcode(platform, bundle_id, target["id"], team, icloud, env, log)
+        log("signing again with %s (it lists %s)" % (prof.get("Name"), target["name"]))
+        sign(str(app), prof_path, prof, identity, bundle_id, env, log, icloud=icloud)
     log("installing on %s (%s)" % (target["name"], target["model"]))
     run(["xcrun", "devicectl", "device", "install", "app", "--device", target["id"], built["path"]], env, log,
         "installing on " + target["name"])
