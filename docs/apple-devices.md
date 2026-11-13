@@ -56,16 +56,23 @@ device are kept when you install a new build.
 The apps are `<prefix>.tv` and `<prefix>.ipad` (default prefix `org.wwhdrecomp`). Use your own: on the setup page
 open **App identifiers**, or pass `--apple-bundle-prefix com.example.wwhd`. Setup remembers it.
 
-To switch devices with one save, give both App IDs the iCloud capability (iCloud Documents) with one container of
-your team, e.g. `iCloud.com.example.wwhd` (Apple Developer site, Identifiers; or Xcode's Signing & Capabilities),
-and let Xcode download the profiles. Then enter the container on the setup page (or `--apple-icloud-container`).
-The save is then kept in iCloud Drive's "Wind Waker HD" folder, the same on the Apple TV, iPhone and iPad; a Mac
-uses it too when Settings > Saves > Save folder points at
-`~/Library/Mobile Documents/iCloud~com~example~wwhd/Documents/Wind Waker HD`. On first start the app copies its
-save there, or asks which to keep if both have one.
+To switch devices with one save, enter an iCloud container name of your own on the setup page (or
+`--apple-icloud-container iCloud.com.example.wwhd`). The build has Xcode register the App IDs, the container and
+your devices in your team, so there is nothing to set up by hand. The Apple TV keeps the save in CloudKit; the
+iPhone and iPad keep it in CloudKit and in iCloud Drive's "Wind Waker HD" folder, which a Mac uses too when
+Settings > Saves > Save folder points at `~/Library/Mobile Documents/iCloud~com~example~wwhd/Documents/Wind Waker HD`.
+At start the newer save wins; if both changed, the game asks which to keep (the other goes to save-backups). A
+"Checking your save in iCloud..." message shows while it looks. The Mac and the Apple TV meet through an iPhone or
+iPad start in between, or the setup page's Saves buttons.
 
 Changing the prefix installs a new app next to the old one: the old app and its save stay until you delete it.
-Copy a save over first if you want to keep it (setup's device check lists the other installs).
+The setup page's Saves section takes the save and settings from it ("Take the save and settings from ...").
+
+## Saves
+
+The setup page's Saves section (or `--apple-save backup|to-device|from-device`) copies the save between this Mac
+and the device's app, and backs the device up. Whatever a copy replaces is backed up on the Mac first, in the
+install's `data/apple/backups`. The game must be closed on the device.
 
 ## Mods
 
