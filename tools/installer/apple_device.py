@@ -363,6 +363,48 @@ def mod_plan(setup, ctx):
     return {"on": True, "included": included, "left_out": left_out, "profile": profile}
 
 
+def prepare_mod_addresses(setup, ctx, log=print, wait=180):
+    """Starts this Mac's game until its mod manager has given each switched-on guest mod its address (the
+    app's modules are built for those addresses; the size includes the mod's heap, which only the game
+    knows), then closes it. A mod still without one is left out of the app, and the plan says why."""
+    missing = [m for m in mod_plan(setup, ctx)["left_out"] if m.get("needs_address")]
+    if not missing:
+        return
+    # the installed game (bin), which starts the code-mods build with code mods on
+    exe = os.path.join(ctx.data_dir, "bin", ctx.manifest["exe"])
+    if any(subprocess.run(["pgrep", "-f", e], stdout=subprocess.DEVNULL).returncode == 0
+           for e in {exe, setup_game_exe(setup, ctx)}):
+        log("The game is open on this Mac: quit it and build again to include %s" % ", ".join(m["name"] for m in missing))
+        return
+    profiles = Path(user_dir(setup, ctx)) / "ModManager" / "profiles.json"
+    want = {m["id"] for m in missing}
+
+    def have():
+        try:
+            return want <= set(json.loads(profiles.read_text(encoding="utf-8")).get("guest_regions", {}))
+        except (OSError, ValueError):
+            return False
+    log("Starting the game on this Mac to set up %s for the app (it closes again by itself)"
+        % ", ".join(m["name"] for m in missing))
+    game = subprocess.Popen([exe, "--game", ctx.game_dir, "--save", os.path.join(ctx.data_dir, "save")], cwd=ctx.data_dir,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        end = time.time() + wait
+        while not have() and game.poll() is None and time.time() < end:
+            time.sleep(1)
+        closed = game.poll() is not None
+    finally:
+        if game.poll() is None:
+            game.terminate()
+            try:
+                game.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                game.kill()
+                game.wait()
+    if not have():
+        log("The game on this Mac didn't set them up (it %s)" % ("closed early" if closed else "took too long"))
+
+
 def built_app(ctx, which):
     """the app built here last: {path, version, build, mods, signed}, or None"""
     app = Path(ctx.data_dir) / "apple" / KINDS[which][0] / "WindWakerHD.app"
@@ -593,6 +635,7 @@ def build_app(setup, ctx, which, team=None, bundle_prefix="org.wwhdrecomp", sign
     if hooks:
         manager = os.path.join(user_dir(setup, ctx), "ModManager")
         if os.path.isdir(manager):
+            prepare_mod_addresses(setup, ctx, log)
             out = run([sys.executable, apple_tool(setup, "bundle_mods.py"), "--app", str(staging), "--manager", manager]
                       + (["--sign", identity] if identity else []), env, log, "building the code mods into the app")
             for line in out.splitlines():

@@ -67,13 +67,13 @@ def plan(manager):
         elif manifest.get("kind") != "guest":
             continue
         elif mod_id not in regions:
-            # not set up on the Mac yet (the app would refuse it)
-            reason = "it has no guest address yet: start the game on this Mac once with it on, then build the app again"
+            # not set up on the Mac yet (the app would refuse it); setup's build starts the Mac's game to set it up
+            reason = "it has no guest address yet (the game on this Mac gives it one when it starts with the mod on)"
         else:
             out.append((mod_id, package, int(regions[mod_id]["base"])))
             continue
         profile["enabled"][mod_id] = False  # off in the app's profile
-        left_out.append({"id": mod_id, "name": name, "reason": reason})
+        left_out.append({"id": mod_id, "name": name, "reason": reason, "needs_address": mod_id not in regions and manifest is not None})
     return profiles, out, left_out
 
 
