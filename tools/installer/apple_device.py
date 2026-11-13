@@ -847,7 +847,8 @@ def pick_device(platform, device, env):
     found = [d for d in paired if d["reachable"] and (not device or device in (d["id"], d["name"]))]
     if len(found) != 1:
         raise Error("%s (%s devices this Mac can reach: %s)"
-                    % ("No such device" if device else "Choose a device" if found else "No %s device this Mac can reach" % platform,
+                    % (("Several devices are named %s: choose one by its identifier" % device if found else "No such device")
+                       if device else "Choose a device" if found else "No %s device this Mac can reach" % platform,
                        platform, ", ".join("%s (%s)" % (d["name"], d["id"]) for d in paired if d["reachable"]) or "none"))
     return found[0]
 
