@@ -1625,6 +1625,7 @@ static struct AppleUI {
     std::string message;   // the last build or install, or a failed request
     bool message_bad = false;
     bool building = false, confirm_install = false;
+    char prefix[128] = "", icloud[128] = "";  // the apps' identifiers (apple_status's settings, edited here)
 } P;
 
 static const char* apple_app_id() { return P.app == 0 ? "tv" : "iphone"; }
@@ -1659,6 +1660,10 @@ static void apple_read(const J& ev) {
     }
     if (cmd == "apple_status") {
         P.status = ev, P.loaded = true;
+        if (const J* ids = ev.get("settings")) {
+            snprintf(P.prefix, sizeof P.prefix, "%s", ids->str("bundle_prefix").c_str());
+            snprintf(P.icloud, sizeof P.icloud, "%s", ids->str("icloud").c_str());
+        }
         // keep the chosen device while it is still listed and reachable
         bool listed = false;
         if (const J* a = apple_app_status())
@@ -1744,6 +1749,24 @@ static void screen_apple() {
             if (const J* c = a->get("checks"))
                 for (const char* k : {"release", "sdk", "shader_compiler", "icon", "signing"}) apple_check_row(c->get(k));
     };
+    if (ImGui::TreeNode("App identifiers##ids")) {
+        // an App ID and an iCloud container belong to one developer team: yours
+        muted("Your apps are <prefix>.tv and <prefix>.ipad. With an iCloud container (iCloud Documents, on both App IDs), "
+              "the save is kept in iCloud Drive, the same on the Apple TV, iPhone, iPad and Mac.");
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18);
+        ImGui::InputTextWithHint("Prefix", "com.example.wwhd", P.prefix, sizeof P.prefix, ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18);
+        ImGui::InputTextWithHint("iCloud container", "none: the save stays on the device", P.icloud, sizeof P.icloud,
+                                 ImGuiInputTextFlags_CharsNoBlank);
+        if (button("Use these", ImVec2(0, 0), false, idle)) {
+            P.loaded = false, P.message.clear(), P.have_state = false;
+            request("apple_status", "\"bundle_prefix\": " + jstr(P.prefix) + ", \"icloud\": " + jstr(P.icloud));
+        }
+        ImGui::TreePop();
+    } else if (const J* ids = P.status.get("settings")) {
+        ImGui::SameLine();
+        muted(ids->str("bundle_prefix") + (ids->str("icloud").empty() ? ", no iCloud" : ", iCloud " + ids->str("icloud")));
+    }
     if (!ready) checks();
     else {
         mark(2);
@@ -1803,6 +1826,10 @@ static void screen_apple() {
             if (inst && inst->t == J::Obj)
                 muted("On the device: version " + inst->str("version") + ", build " + inst->str("build"));
             else muted("The game isn't installed on the device yet.");
+            if (const J* others = P.state.get("others"))
+                for (auto& o : others->a)
+                    muted("The device also has Wind Waker HD as " + o.str("bundle_id") + " (version " + o.str("version") +
+                          "): installing leaves it and its save as they are.");
             const J* running = P.state.get("running");
             if (running && running->t == J::Bool && running->b)
                 colored(BAD, "The game is open on the device: save, quit it there, then check again.");
