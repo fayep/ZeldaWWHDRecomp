@@ -77,6 +77,16 @@ def plan(manager):
     return profiles, out, left_out
 
 
+def default_include():
+    """the guest ABI headers: a release's sdk/include, else the checkout's runtime/include"""
+    release = REPO / "sdk" / "include"
+    return release if (release / "wwhd_guest_abi.h").is_file() else REPO / "runtime" / "include"
+
+
+def guest_mod_builder():
+    return REPO / "tools" / "guestmod" / "build_guest_mod.py"
+
+
 def seed_digest(folder):
     h = hashlib.sha256()
     for f in sorted(p for p in folder.rglob("*") if p.is_file()):
@@ -89,7 +99,7 @@ def main():
     ap.add_argument("--app", required=True, type=Path, help="WindWakerHD.app")
     ap.add_argument("--manager", required=True, type=Path, help="the prepared ModManager folder")
     ap.add_argument("--build", default="USA", help="the game build (USA or EU), as the app's game files")
-    ap.add_argument("--include", type=Path, default=next((d for d in (REPO / "sdk" / "include", REPO / "runtime" / "include") if (d / "wwhd_guest_abi.h").is_file()), REPO / "runtime" / "include"), help="the runtime's guest ABI headers")
+    ap.add_argument("--include", type=Path, default=default_include(), help="the runtime's guest ABI headers")
     ap.add_argument("--sign", help="code signing identity for the modules (the app's)")
     a = ap.parse_args()
     if not (a.app / "Info.plist").is_file():
@@ -106,7 +116,7 @@ def main():
     (seed / "Mods").mkdir(parents=True)
     with tempfile.TemporaryDirectory() as cache:
         for mod_id, package, base in mods:
-            r = subprocess.run([sys.executable, str(REPO / "tools" / "guestmod" / "build_guest_mod.py"), str(package),
+            r = subprocess.run([sys.executable, str(guest_mod_builder()), str(package),
                                 "--base", str(base), "--build", a.build, "--json", "--out", cache,
                                 "--include", str(a.include), "--cc-json", json.dumps(cc)],
                                capture_output=True, text=True)
