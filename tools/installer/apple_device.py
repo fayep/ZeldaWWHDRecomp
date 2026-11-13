@@ -300,6 +300,44 @@ def shader_generation(data_dir, user_dir):
     raise Error("This Mac's game has no shaders yet: start the game and play for a while first")
 
 
+def sweep_models(setup, ctx, log):
+    """The models step of shader preparation (model_sweep.py: the game draws every object's models once, hidden, and
+    the live cache records their shaders), for this Mac's game when it hasn't run for this game and build. Only the
+    player's own game files are used, so it works without the shader template too. Resumes where it stopped; the
+    device's library then covers what it recorded."""
+    import shader_prebuild
+    import model_sweep
+    root = Path(user_dir(setup, ctx)) / "shader-prebuild"
+    exe = setup_game_exe(setup, ctx)
+    template = Path(setup.PKG) / "tools" / "shadercache" / "template.bin"
+    try:
+        wanted = shader_prebuild.identity(ctx.game_dir, template if template.is_file() else None, setup.PKG, "metal")
+    except (OSError, ValueError) as e:
+        log("models step skipped: %s" % e)
+        return
+    pipeline = shader_prebuild.pipeline_identity_of(exe)
+    wanted["runtime"] = ("pipeline:" + pipeline) if pipeline else shader_prebuild.file_hash(exe)
+    ident = model_sweep.identity_of(wanted, "metal")
+    if model_sweep.status(root, "metal", ident) == "done":
+        return
+    log("drawing the game's models once on this Mac, so the device's shader library covers them (the first time "
+        "takes a while; it resumes if stopped)")
+    env = shader_prebuild.cache_environment(root / "no-generation", ctx.game_dir, "metal")
+    shown = [-1]
+
+    def line(text):
+        parsed = shader_prebuild.parse_progress(text)
+        if parsed and parsed[1]:
+            pct = parsed[0] * 100 // parsed[1]
+            if pct >= shown[0] + 5:
+                shown[0] = pct
+                log("models: %d%%" % pct)
+
+    result = model_sweep.run(exe, ctx.game_dir, str(root), "metal", ident, env, line=line, log=log,
+                             processes=model_sweep.processes(1))
+    log("models step: %s" % result)
+
+
 def build_shader_library(setup, ctx, sdk, out, env, log):
     """the device's shaders.metallib: this Mac's game writes every shader's source (a Metal warm, as shader
     preparation does for the Mac's own library), Xcode's compiler builds them for SDK"""
@@ -702,6 +740,7 @@ def build_app(setup, ctx, which, team=None, bundle_prefix="org.wwhdrecomp", sign
     for part in ("code", "content", "meta"):
         run(["cp", "-cR", os.path.join(ctx.game_dir, part), str(game / part)], env, log, "copying the game files")
     stage("apple_shaders")
+    sweep_models(setup, ctx, log)
     gen, live = shader_generation(ctx.data_dir, user_dir(setup, ctx))
     if (live / "shaders.bin").is_file():
         shutil.copyfile(live / "shaders.bin", staging / "shaders.bin")
