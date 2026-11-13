@@ -902,6 +902,9 @@ shaders and rectangle primitives are not implemented yet (not encountered in the
 
 ## Other platforms
 
+**Apple TV, iPhone and iPad (experimental):** the macOS release builds the game for your own devices from your
+game and installs it (Xcode 26 and a paid Apple Developer account): see [docs/apple-devices.md](docs/apple-devices.md).
+
 **Nintendo Switch:** [SwitchWakerHD](https://github.com/centollOS/SwitchWakerHD) is a community port built on this
 project, by Pulpparty, depende3000, centollOS and contributors. Like this project, it needs your own copy of the game,
 and no builds containing game code are shared. It is a separate project, not tested or supported here: please report
