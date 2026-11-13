@@ -317,6 +317,9 @@ def sweep_models(setup, ctx, log):
         return
     pipeline = shader_prebuild.pipeline_identity_of(exe)
     wanted["runtime"] = ("pipeline:" + pipeline) if pipeline else shader_prebuild.file_hash(exe)
+    # with the particle pass: every effect of the common and title particle resources (dsweep.cpp), what actors
+    # and the world spawn while running; a device can't afford to compile them during play
+    wanted["particles"] = True
     ident = model_sweep.identity_of(wanted, "metal")
     if model_sweep.status(root, "metal", ident) == "done":
         return
@@ -333,8 +336,16 @@ def sweep_models(setup, ctx, log):
                 shown[0] = pct
                 log("models: %d%%" % pct)
 
-    result = model_sweep.run(exe, ctx.game_dir, str(root), "metal", ident, env, line=line, log=log,
-                             processes=model_sweep.processes(1))
+    before = os.environ.get("WWHD_SETUP_MODEL_SWEEP_PARTICLES")
+    os.environ["WWHD_SETUP_MODEL_SWEEP_PARTICLES"] = "1"
+    try:
+        result = model_sweep.run(exe, ctx.game_dir, str(root), "metal", ident, env, line=line, log=log,
+                                 processes=model_sweep.processes(1))
+    finally:
+        if before is None:
+            os.environ.pop("WWHD_SETUP_MODEL_SWEEP_PARTICLES", None)
+        else:
+            os.environ["WWHD_SETUP_MODEL_SWEEP_PARTICLES"] = before
     log("models step: %s" % result)
 
 
