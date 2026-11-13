@@ -4199,7 +4199,9 @@ def gui_main(args):
                                                                 bundle_prefix=req.get("bundle_prefix") or "org.wwhdrecomp")))
 
     def do_apple_build(req):
-        """{app: tv|iphone, team?, bundle_prefix?} -> streams step/log, then {app: built_app()}"""
+        """{app: tv|iphone, team?, bundle_prefix?} -> streams plan/step/log, then {app: built_app()}"""
+        import apple_device
+        GUI.emit({"event": "plan", "id": req.get("id"), "steps": [{"id": s, "title": t} for s, t in apple_device.BUILD_STEPS]})
         apple_call(req, lambda ad: reply(req, app=ad.build_app(
             sys.modules[__name__], ctx, req.get("app"), team=req.get("team"),
             bundle_prefix=req.get("bundle_prefix") or "org.wwhdrecomp", log=apple_log, step=step)))
