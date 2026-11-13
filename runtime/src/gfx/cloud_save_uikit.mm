@@ -26,7 +26,7 @@ namespace fs = std::filesystem;
 namespace cloud_save {
 namespace {
 constexpr const char* kMagic = "WWHDSAVE1\n";
-const double kWait = 20.0;  // seconds for each CloudKit call at start-up
+const double kWait = 10.0;  // seconds for each CloudKit call at start-up
 
 struct Files {
     std::map<std::string, std::string> data;  // user/<name> -> bytes
@@ -38,6 +38,41 @@ CKContainer* g_container = nil;
 std::string g_dir;  // the save folder
 std::mutex g_mu;    // one sync at a time
 std::atomic<bool> g_running{false};
+std::atomic<bool> g_upload_now{false};  // the uploader's first round right away (start-up leaves uploads to it)
+
+// "Checking your save in iCloud..." over the black screen before the game's first picture, when the check takes
+// longer than a moment
+UILabel* g_label = nil;
+std::atomic<int> g_status{0};  // which check the label belongs to; 0: none
+
+void show_status() {
+    const int mine = ++g_status;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, int64_t(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (g_status != mine || g_label) return;
+        UIView* view = nil;
+        for (UIScene* scene in UIApplication.sharedApplication.connectedScenes)
+            if ([scene isKindOfClass:UIWindowScene.class])
+                for (UIWindow* w in ((UIWindowScene*)scene).windows)
+                    if (w.isKeyWindow) view = w.rootViewController.view;
+        if (!view) return;
+        g_label = [UILabel new];
+        g_label.text = @"Checking your save in iCloud\u2026";
+        g_label.textColor = UIColor.whiteColor;
+        g_label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+        g_label.textAlignment = NSTextAlignmentCenter;
+        g_label.frame = view.bounds;
+        g_label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [view addSubview:g_label];
+    });
+}
+
+void hide_status() {
+    g_status = 0;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [g_label removeFromSuperview];
+        g_label = nil;
+    });
+}
 
 std::string hex(const unsigned char* p, size_t n) {
     static const char* d = "0123456789abcdef";
@@ -244,6 +279,7 @@ void startup(const std::string& save_dir, const Ask& ask) {
     if (![name isKindOfClass:NSString.class] || !name.length) return;
     g_container = [CKContainer containerWithIdentifier:name];
     g_dir = save_dir;
+    show_status();
     __block CKAccountStatus status = CKAccountStatusCouldNotDetermine;
     wait_for(^(dispatch_semaphore_t done) {
         [g_container accountStatusWithCompletionHandler:^(CKAccountStatus s, NSError*) {
@@ -252,6 +288,7 @@ void startup(const std::string& save_dir, const Ask& ask) {
         }];
     }, kWait);
     if (status != CKAccountStatusAvailable) {
+        hide_status();
         log_msg("[cloud save] no iCloud account here (status %ld): the save stays on this device", (long)status);
         return;
     }
@@ -263,7 +300,7 @@ void startup(const std::string& save_dir, const Ask& ask) {
         if (!fetch(r, kWait)) {
             log_msg("[cloud save] playing this device's save; it goes to iCloud when iCloud answers");
         } else if (!r) {
-            if (!local.hash.empty()) upload(r, local, kWait);
+            g_upload_now = !local.hash.empty();
         } else {
             NSString* h = r[@"hash"];
             const std::string there = [h isKindOfClass:NSString.class] ? h.UTF8String : "";
@@ -288,30 +325,33 @@ void startup(const std::string& save_dir, const Ask& ask) {
                     log_msg("[cloud save] the save in iCloud couldn't be read: keeping this device's");
                 }
             } else if (there == synced) {
-                upload(r, local, kWait);
+                g_upload_now = true;
             } else {
                 // both changed since this device last synced
                 const std::string text = "The save in iCloud and this device's save have both changed.\n\n"
                                          "In iCloud: saved " + local_time(there_saved) + " on " + device + "\n"
                                          "On this device: saved " + local_time(local.saved) + "\n\n"
                                          "Which save do you want to play? The other one is kept in save-backups.";
+                hide_status();
                 const int pick = ask ? ask("Wind Waker HD: iCloud save", text, {"Use the iCloud save", "Keep this device's save"}) : -1;
                 if (pick == 0 && download(r, files)) {
                     backup(local.data, "this-device");
                     if (apply(files)) set_synced(there), log_msg("[cloud save] using the save from iCloud (chosen)");
                 } else if (pick == 1) {
                     if (download(r, files)) backup(files, "icloud");
-                    upload(r, local, kWait);
+                    set_synced(there);  // (iCloud's save is the one this device replaces)
+                    g_upload_now = true;
                 } else {
                     log_msg("[cloud save] both saves changed and no choice was made: playing this device's, iCloud's stays");
                 }
             }
         }
     }
+    hide_status();
     if (!g_running.exchange(true))
         std::thread([] {
             for (;;) {
-                std::this_thread::sleep_for(std::chrono::seconds(20));
+                if (!g_upload_now.exchange(false)) std::this_thread::sleep_for(std::chrono::seconds(20));
                 @autoreleasepool { upload_if_changed(60); }
             }
         }).detach();
