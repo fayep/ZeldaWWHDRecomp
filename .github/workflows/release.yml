@@ -157,6 +157,28 @@ jobs:
             -DVulkan_LIBRARY="$RUNNER_TEMP/vk/prefix/lib/libvulkan.1.dylib"
           cmake --build build/rel
 
+      - name: Apple TV and iPhone / iPad runtime (setup.py --apple-device, docs/apple-device-installer.md)
+        # the runtime built for tvOS and iOS against the same placeholder code; package.py --apple-build ships
+        # its objects and link recipe in sdk/apple/<tvos|ios>, and setup links the player's own game with them
+        # the newest Xcode on the runner (players need Xcode 26 or newer for the device build anyway)
+        run: |
+          X=$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$X" ]; then export DEVELOPER_DIR="$X/Contents/Developer"; fi
+          xcodebuild -version
+          for p in tvOS iOS; do
+            sdk=$([ $p = tvOS ] && echo appletvos || echo iphoneos)
+            xcodebuild -showsdks | grep -q "$sdk" || xcodebuild -downloadPlatform $p
+          done
+          xcodebuild -showsdks | grep -E "appletvos|iphoneos"
+          for kind in tvOS iOS; do
+            case $kind in tvOS) sysroot=appletvos dir=tvos ;; iOS) sysroot=iphoneos dir=ios ;; esac
+            cmake -S . -B build/$dir -G Ninja -DCMAKE_BUILD_TYPE=Release -DWWHD_VERSION="$VERSION" -DWWHD_RENDERER=METAL \
+              -DGEN_DIR="$PWD/build/gen-stub" -DWWHD_BUNDLED_DEPS=ON -DWWHD_BUNDLED_ZSTD=ON \
+              -DCMAKE_SYSTEM_NAME=$kind -DCMAKE_OSX_SYSROOT=$sysroot -DCMAKE_OSX_ARCHITECTURES=arm64 \
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0
+            cmake --build build/$dir --target wwhd
+          done
+
       - name: Decomp version parts (development builds; setup's experimental option, docs/decomp-build.md)
         # the same runtime built for the decomp build, without game units and without the game
         # (WWHD_DECOMP_RUNTIME_ONLY); package.py --decomp-build takes the objects that differ, how setup compiles
@@ -182,6 +204,7 @@ jobs:
         run: |
           ctest --test-dir build/rel --output-on-failure --timeout 600
           python3 tools/installer/test_setup.py
+          python3 tools/installer/test_apple_layout.py
           python3 tools/installer/test_python_runtime.py
           python3 tools/recomp/test_builds.py
 
@@ -192,6 +215,7 @@ jobs:
           if [ -d build/rel-decomp ]; then DECOMP=(--decomp-build build/rel-decomp); fi
           python3 tools/release/package.py --build build/rel --platform macos-arm64 --version "$VERSION" \
             --out dist --toolchain xcode-clt --setup-gui build/rel/wwhd-setup "${DECOMP[@]}" \
+            --apple-build build/tvos --apple-build build/ios \
             --runtime-file "$VK/runtime/libvulkan.1.dylib" \
             --runtime-file "$VK/runtime/libMoltenVK.dylib" \
             --runtime-file "$VK/runtime/MoltenVK_icd.json" \
@@ -244,6 +268,10 @@ jobs:
           cat nolib.log
           grep -q "Vulkan loader (libvulkan) is missing" nolib.log
           mv "$RUNNER_TEMP/libvulkan.1.dylib" "$B/"
+          # the Apple device build's report from the unzipped release: both apps are in it (the runner has no
+          # signing identity or devices, so only the release's own parts are checked)
+          python3 tools/installer/setup.py --apple-status --data-dir "$RUNNER_TEMP/data" > apple-status.json
+          python3 -c 'import json,sys; j=json.load(open("apple-status.json")); bad=[k for k,a in j["apps"].items() if not a["checks"]["release"]["ok"]]; print(json.dumps(j["apps"], indent=1)[:4000]); sys.exit("apple apps missing from the release: %s" % bad if bad else 0)'
           # the graphical installer: starts setup.py through the launcher and renders its first screen
           SDL_VIDEO_DRIVER=offscreen "./Wind Waker HD.app/Contents/MacOS/wind-waker-hd" --self-test \
             --screenshots "$RUNNER_TEMP" --data-dir "$RUNNER_TEMP/data"
