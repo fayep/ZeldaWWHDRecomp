@@ -9,7 +9,9 @@
 set -eu
 cd "$(dirname "$0")/.."
 OUT="${1:-build/apple-test}"
-VERSION="${WWHD_VERSION:-0.0.0-apple-test}"
+# the latest release's number, so the mod catalogue's version checks pass
+LATEST="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)"
+VERSION="${WWHD_VERSION:-${LATEST#v}-apple-test}"
 if [ -e "$OUT/dist" ]; then
   echo "$OUT/dist already exists: move it away or pass another folder" >&2
   exit 1
